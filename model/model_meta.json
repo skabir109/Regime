@@ -1,0 +1,26 @@
+{
+  "classes": [
+    "RiskOff",
+    "RiskOn",
+    "HighVol"
+  ],
+  "features": [
+    "spy_ret_1d",
+    "spy_mom_5d",
+    "spy_mom_20d",
+    "spy_vol_10d",
+    "spy_vol_20d",
+    "gld_ret_1d",
+    "gld_mom_20d",
+    "uso_ret_1d",
+    "uso_mom_20d",
+    "gbp_ret_1d",
+    "gbp_mom_20d",
+    "vix_level",
+    "vix_chg_5d"
+  ],
+  "thresholds": {
+    "VIX_HIGH": 25.0,
+    "SPY_VOL_HIGH": 0.02
+  }
+}
