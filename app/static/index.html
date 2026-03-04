@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Regime Terminal</title>
+    <link rel="stylesheet" href="/static/dashboard.css" />
+  </head>
+  <body>
+    <div class="screen-glow"></div>
+    <main class="terminal-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">DIGITALOCEAN AI HACKATHON</p>
+          <h1>REGIME TERMINAL</h1>
+        </div>
+        <div class="topbar-meta">
+          <span class="signal"><i></i> LIVE MODEL</span>
+          <span id="timestamp">SYNCING...</span>
+        </div>
+      </header>
+
+      <section class="hero-grid">
+        <div class="hero-panel primary-panel">
+          <div class="panel-label">CURRENT MARKET STATE</div>
+          <div class="regime-row">
+            <div>
+              <div id="regime" class="regime-value">--</div>
+              <p id="regime-blurb" class="regime-blurb">Waiting for latest inference.</p>
+            </div>
+            <div class="confidence-ring">
+              <svg viewBox="0 0 120 120" class="ring-svg" aria-hidden="true">
+                <circle cx="60" cy="60" r="48" class="ring-track"></circle>
+                <circle cx="60" cy="60" r="48" class="ring-fill" id="ring-fill"></circle>
+              </svg>
+              <div class="ring-text">
+                <span id="confidence">0%</span>
+                <small>confidence</small>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="hero-panel">
+          <div class="panel-label">SYSTEM STATUS</div>
+          <div class="stat-grid">
+            <article>
+              <span>Model</span>
+              <strong id="model-status">--</strong>
+            </article>
+            <article>
+              <span>Data Feed</span>
+              <strong id="data-status">--</strong>
+            </article>
+            <article>
+              <span>Feature Count</span>
+              <strong id="feature-count">--</strong>
+            </article>
+            <article>
+              <span>Refresh</span>
+              <strong>30s</strong>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="dashboard-grid">
+        <article class="panel">
+          <div class="panel-label">PROBABILITY LADDER</div>
+          <div id="probability-list" class="probability-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-label">REGIME BRIEFING</div>
+          <div id="briefing" class="briefing-copy"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-label">MODEL METADATA</div>
+          <div class="metadata-grid">
+            <div>
+              <span>Classes</span>
+              <strong id="classes">--</strong>
+            </div>
+            <div>
+              <span>Thresholds</span>
+              <strong id="thresholds">--</strong>
+            </div>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script src="/static/dashboard.js"></script>
+  </body>
+</html>
