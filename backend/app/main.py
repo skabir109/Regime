@@ -52,6 +52,7 @@ from app.schemas import (
     StoryBriefing,
     SubscriptionTier,
     SubscriptionUpdateRequest,
+    SupabaseSessionRequest,
     TerminalBootstrapResponse,
     PremarketBriefing,
     WorldAffairsBriefing,
@@ -69,6 +70,7 @@ from app.schemas import (
 )
 from app.services.alerts import build_alerts
 from app.services.auth import (
+    authenticate_supabase_access_token,
     authenticate_user,
     create_session,
     current_user_or_401,
@@ -254,6 +256,28 @@ def auth_login(request: Request, payload: LoginRequest, response: Response):
         return user
     except Exception as exc:
         log_audit_event("user_login_failed", None, {"email": payload.email, "error": str(exc), "ip": request.client.host if request.client else None})
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+@app.post("/auth/supabase/session", response_model=UserResponse, tags=["auth"])
+@limiter.limit("15/minute")
+def auth_supabase_session(request: Request, payload: SupabaseSessionRequest, response: Response):
+    try:
+        user = authenticate_supabase_access_token(payload.access_token)
+        token = create_session(user["id"])
+        _set_session_cookie(response, token)
+        log_audit_event(
+            "user_logged_in_supabase",
+            user["id"],
+            {"email": user["email"], "ip": request.client.host if request.client else None},
+        )
+        return user
+    except Exception as exc:
+        log_audit_event(
+            "user_login_supabase_failed",
+            None,
+            {"error": str(exc), "ip": request.client.host if request.client else None},
+        )
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 

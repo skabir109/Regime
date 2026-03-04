@@ -90,10 +90,20 @@ npm run dev
 - `REGIME_SESSION_SECURE`
 - `REGIME_SESSION_SAMESITE`
 - `ALPHA_VANTAGE_API_KEY`
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
 
 ### Frontend
 
 - `NEXT_PUBLIC_API_BASE_URL`
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+
+### Supabase Email Auth
+
+- Email signup and sign-in can be handled by Supabase from the Next.js login page.
+- After Supabase returns an access token, the frontend exchanges it with the backend at `POST /auth/supabase/session`.
+- The backend verifies that Supabase token against `SUPABASE_URL` and `SUPABASE_ANON_KEY`, then creates or updates the local app user and sets the normal `regime_session` cookie.
 
 ## Product References
 

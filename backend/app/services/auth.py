@@ -5,8 +5,9 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, Request
+import requests
 
-from app.config import SESSION_COOKIE_NAME, SESSION_DURATION_HOURS
+from app.config import SESSION_COOKIE_NAME, SESSION_DURATION_HOURS, SUPABASE_ANON_KEY, SUPABASE_URL
 from app.services.db import get_connection
 from app.services.subscriptions import DEFAULT_TIER, normalize_tier
 
@@ -88,6 +89,83 @@ def authenticate_user(email: str, password: str) -> dict:
         "tier": normalize_tier(user["tier"]),
         "created_at": user["created_at"],
     }
+
+
+def _default_name_for_email(email: str) -> str:
+    local_part = email.split("@", 1)[0].replace(".", " ").replace("_", " ").replace("-", " ").strip()
+    if not local_part:
+        return "Regime User"
+    return " ".join(part.capitalize() for part in local_part.split())
+
+
+def _upsert_supabase_user(profile: dict) -> dict:
+    email = (profile.get("email") or "").strip().lower()
+    if not email:
+        raise ValueError("Supabase user is missing an email address.")
+
+    user_metadata = profile.get("user_metadata") or {}
+    name = (
+        user_metadata.get("name")
+        or user_metadata.get("full_name")
+        or profile.get("name")
+        or _default_name_for_email(email)
+    ).strip()
+    created_at = profile.get("created_at") or datetime.now(timezone.utc).isoformat()
+
+    with get_connection() as connection:
+        existing = connection.execute(
+            "SELECT id FROM users WHERE email = ?",
+            (email,),
+        ).fetchone()
+
+        if existing:
+            connection.execute(
+                "UPDATE users SET name = ?, is_verified = 1 WHERE id = ?",
+                (name, existing["id"]),
+            )
+            row = connection.execute(
+                "SELECT id, email, name, tier, created_at, is_verified FROM users WHERE id = ?",
+                (existing["id"],),
+            ).fetchone()
+        else:
+            connection.execute(
+                "INSERT INTO users (email, name, password_hash, tier, created_at, is_verified, verification_token) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (email, name, hash_password(secrets.token_urlsafe(32)), DEFAULT_TIER, created_at, 1, None),
+            )
+            row = connection.execute(
+                "SELECT id, email, name, tier, created_at, is_verified FROM users WHERE email = ?",
+                (email,),
+            ).fetchone()
+
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "name": row["name"],
+        "tier": normalize_tier(row["tier"]),
+        "created_at": row["created_at"],
+        "is_verified": bool(row["is_verified"]),
+    }
+
+
+def authenticate_supabase_access_token(access_token: str) -> dict:
+    token = access_token.strip()
+    if not token:
+        raise ValueError("Supabase access token is required.")
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        raise ValueError("Supabase auth is not configured on the backend.")
+
+    response = requests.get(
+        f"{SUPABASE_URL}/auth/v1/user",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "apikey": SUPABASE_ANON_KEY,
+        },
+        timeout=10,
+    )
+    if response.status_code >= 400:
+        raise ValueError("Supabase session could not be verified.")
+
+    return _upsert_supabase_user(response.json())
 
 
 def create_session(user_id: int) -> str:

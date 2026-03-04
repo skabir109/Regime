@@ -13,9 +13,6 @@ export default function HomePage() {
             <a className="button button-primary" href="/login">
               Sign In
             </a>
-            <a className="button" href="/terminal">
-              Open Terminal
-            </a>
           </div>
         </div>
 

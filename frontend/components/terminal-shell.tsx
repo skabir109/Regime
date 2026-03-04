@@ -49,6 +49,7 @@ type MarketStateSummary = {
   supporting_signals: string[];
   conflicting_signals: string[];
   changes_since_yesterday: string[];
+  what_matters_now: string[];
   bull_case: string[];
   bear_case: string[];
   next_steps: string[];
@@ -614,6 +615,7 @@ function emptyMarketState(): MarketStateSummary {
     supporting_signals: [],
     conflicting_signals: [],
     changes_since_yesterday: [],
+    what_matters_now: [],
     bull_case: [],
     bear_case: [],
     next_steps: [],
@@ -1247,6 +1249,24 @@ export default function TerminalShell() {
                     ))}
                   {!Object.keys(data?.prediction.probabilities || {}).length ? <SkeletonList rows={3} /> : null}
                 </div>
+              </article>
+
+              <article className="nt-panel nt-card">
+                <span className="eyebrow">What Matters Now</span>
+                {bootstrapping ? (
+                  <SkeletonList rows={3} />
+                ) : (
+                  <div className="nt-stack">
+                    {(data?.marketState.what_matters_now?.length
+                      ? data.marketState.what_matters_now
+                      : [data?.marketState.summary || guide.meaning]
+                    ).map((item, index) => (
+                      <div className="nt-list-item" key={`matters-${item}-${index}`}>
+                        <p>{item}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </article>
 
               <article className="nt-panel nt-card">

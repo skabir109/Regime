@@ -206,6 +206,22 @@ def build_market_state_summary(model, meta: dict) -> dict:
         f'Cross-asset picture: {cross_asset_confirmation.lower()}.'
     )
 
+    what_matters_now = []
+    if bull_case:
+        what_matters_now.append(bull_case[0])
+    elif supporting_signals:
+        what_matters_now.append(supporting_signals[0])
+
+    if bear_case:
+        what_matters_now.append(bear_case[0])
+    elif conflicting_signals:
+        what_matters_now.append(conflicting_signals[0])
+
+    if changes_since_yesterday:
+        what_matters_now.append(changes_since_yesterday[0])
+    elif warnings:
+        what_matters_now.append(warnings[0])
+
     next_steps = [
         "Read the bull and bear case before trusting the regime at face value.",
         "Open Signals to see which watchlist names are aligned or fighting the current backdrop.",
@@ -243,6 +259,7 @@ def build_market_state_summary(model, meta: dict) -> dict:
         "supporting_signals": supporting_signals[:5],
         "conflicting_signals": conflicting_signals[:5],
         "changes_since_yesterday": changes_since_yesterday[:5],
+        "what_matters_now": what_matters_now[:3],
         "bull_case": bull_case[:4],
         "bear_case": bear_case[:4],
         "next_steps": next_steps,

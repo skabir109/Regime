@@ -194,6 +194,10 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
+
+class SupabaseSessionRequest(BaseModel):
+    access_token: str
+
 class ForgotPasswordRequest(BaseModel):
     email: str
 
@@ -234,16 +238,17 @@ class MarketStateSummary(BaseModel):
     trend_strength: str
     cross_asset_confirmation: str
     summary: str
-    drivers: list[RegimeDriver]
-    warnings: list[str]
-    leaders: list[MarketLeader]
-    laggards: list[MarketLeader]
-    supporting_signals: list[str]
-    conflicting_signals: list[str]
-    changes_since_yesterday: list[str]
-    bull_case: list[str]
-    bear_case: list[str]
-    next_steps: list[str]
+    drivers: list[RegimeDriver] = []
+    warnings: list[str] = []
+    leaders: list[MarketLeader] = []
+    laggards: list[MarketLeader] = []
+    supporting_signals: list[str] = []
+    conflicting_signals: list[str] = []
+    changes_since_yesterday: list[str] = []
+    what_matters_now: list[str] = []
+    bull_case: list[str] = []
+    bear_case: list[str] = []
+    next_steps: list[str] = []
 
 
 class SectorPerformance(BaseModel):

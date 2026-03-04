@@ -1,8 +1,11 @@
 from pathlib import Path
 import os
+from dotenv import load_dotenv
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR.parent / ".env")
+
 DATA_PATH = BASE_DIR / "data" / "prices_daily.csv"
 MODEL_DIR = BASE_DIR / "model"
 MODEL_PATH = MODEL_DIR / "regime_xgb.joblib"
@@ -28,3 +31,5 @@ SESSION_SAMESITE = os.getenv("REGIME_SESSION_SAMESITE", "lax")
 
 ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "")
 CALENDAR_PROVIDER = os.getenv("REGIME_CALENDAR_PROVIDER", "auto").lower()
+SUPABASE_URL = os.getenv("SUPABASE_URL", os.getenv("NEXT_PUBLIC_SUPABASE_URL", "")).rstrip("/")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY", ""))

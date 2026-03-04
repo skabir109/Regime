@@ -5,33 +5,76 @@ import { apiFetch } from "@/lib/api";
 
 type AuthMode = "login" | "register";
 
+type SupabaseAuthResponse = {
+  access_token?: string;
+};
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+
+async function supabaseAuthRequest<T>(path: string, payload: Record<string, unknown>) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    throw new Error("Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.");
+  }
+
+  const response = await fetch(`${SUPABASE_URL}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: SUPABASE_ANON_KEY,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = (await response.json().catch(() => ({}))) as {
+    msg?: string;
+    error_description?: string;
+  } & T;
+
+  if (!response.ok) {
+    throw new Error(data.error_description || data.msg || "Authentication failed.");
+  }
+
+  return data;
+}
+
 export default function LoginPage() {
   const [mode, setMode] = useState<AuthMode>("login");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(formData: FormData) {
     setLoading(true);
     setError("");
+    setNotice("");
 
-    const payload =
-      mode === "login"
-        ? {
-            email: String(formData.get("email") || ""),
-            password: String(formData.get("password") || ""),
-          }
-        : {
-            name: String(formData.get("name") || ""),
-            email: String(formData.get("email") || ""),
-            password: String(formData.get("password") || ""),
-          };
-
-    const endpoint = mode === "login" ? "/auth/login" : "/auth/register";
+    const email = String(formData.get("email") || "").trim();
+    const password = String(formData.get("password") || "");
+    const name = String(formData.get("name") || "").trim();
 
     try {
-      await apiFetch(endpoint, {
+      const authPayload =
+        mode === "login"
+          ? await supabaseAuthRequest<SupabaseAuthResponse>("/auth/v1/token?grant_type=password", {
+              email,
+              password,
+            })
+          : await supabaseAuthRequest<SupabaseAuthResponse>("/auth/v1/signup", {
+              email,
+              password,
+              data: { name },
+            });
+
+      if (!authPayload.access_token) {
+        setNotice("Account created. Check your email to confirm it, then sign in to open the terminal.");
+        setMode("login");
+        return;
+      }
+
+      await apiFetch("/auth/supabase/session", {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ access_token: authPayload.access_token }),
       });
       window.location.href = "/terminal";
     } catch (caught) {
@@ -71,11 +114,12 @@ export default function LoginPage() {
           {error ? (
             <div className="auth-error">{error}</div>
           ) : null}
+          {notice ? <div className="auth-notice">{notice}</div> : null}
           <form action={async (formData) => await handleSubmit(formData)} className="auth-form">
             {mode === "register" ? (
               <input className="auth-input" name="name" placeholder="Name" />
             ) : null}
-            <input className="auth-input" name="email" placeholder="Email" />
+            <input className="auth-input" name="email" placeholder="Email" type="email" />
             <input
               className="auth-input"
               name="password"
