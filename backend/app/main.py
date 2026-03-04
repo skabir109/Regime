@@ -69,6 +69,8 @@ from app.schemas import (
     RegisterRequest,
 )
 from app.services.alerts import build_alerts
+from sqlmodel import Session, select, SQLModel
+from app.services.db import get_engine
 from app.services.auth import (
     authenticate_supabase_access_token,
     authenticate_user,
@@ -82,7 +84,6 @@ from app.services.auth import (
     verify_email,
 )
 from app.services.audit import log_audit_event
-from app.services.db import init_db
 from app.services.delivery import send_global_macro_briefing
 from app.services.briefing import build_premarket_briefing
 from app.services.briefing_history import load_briefing_history
@@ -137,7 +138,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-init_db()
+SQLModel.metadata.create_all(get_engine(use_direct=True))
 
 MODEL, META = load_artifacts()
 _CACHE: dict[str, tuple[float, object]] = {}
@@ -166,8 +167,43 @@ def _cached(key: str, ttl_seconds: int, factory):
     return value
 
 
+def _invalidate_cache(*prefixes: str):
+    if not prefixes:
+        _CACHE.clear()
+        return
+    keys = [key for key in list(_CACHE.keys()) if any(key.startswith(prefix) for prefix in prefixes)]
+    for key in keys:
+        _CACHE.pop(key, None)
+
+
+def _invalidate_user_terminal_cache(user_id: int):
+    _invalidate_cache(
+        f"terminal_bootstrap:{user_id}",
+        f"workspace_shared:{user_id}",
+        f"alerts:{user_id}",
+        f"watchlist_intelligence:{user_id}",
+        f"watchlist_exposures:{user_id}",
+        f"watchlist_news:{user_id}",
+        f"watchlist_detail:{user_id}",
+        f"briefing_premarket:{user_id}",
+        f"calendar:{user_id}",
+    )
+
+
 def _cached_market_state():
     return _cached("market_state", 20, lambda: build_market_state_summary(MODEL, META))
+
+
+def _cached_prediction_latest():
+    return _cached("predict_latest", 10, lambda: predict_latest(MODEL, META))
+
+
+def _cached_regime_transitions(limit: int):
+    return _cached(
+        f"regime_transitions:{limit}",
+        60,
+        lambda: compute_regime_transitions(MODEL, META, limit=limit),
+    )
 
 
 def _cached_market_panels(window: int):
@@ -202,6 +238,105 @@ def _cached_signals(limit: int):
     return _cached(f"signals:{limit}", 20, lambda: fetch_trending_signals(limit=limit))
 
 
+def _watchlist_signature(user_id: int) -> str:
+    items = load_watchlist(user_id)
+    symbols = sorted(str(item.get("symbol", "")).upper() for item in items if item.get("symbol"))
+    return ",".join(symbols) if symbols else "empty"
+
+
+def _cached_watchlist_intelligence(user_id: int):
+    signature = _watchlist_signature(user_id)
+    return _cached(
+        f"watchlist_intelligence:{user_id}:{signature}",
+        30,
+        lambda: build_watchlist_intelligence(user_id),
+    )
+
+
+def _cached_watchlist_exposures(user_id: int):
+    signature = _watchlist_signature(user_id)
+    return _cached(
+        f"watchlist_exposures:{user_id}:{signature}",
+        30,
+        lambda: build_watchlist_exposures(user_id),
+    )
+
+
+def _cached_watchlist_news(user_id: int, limit: int):
+    signature = _watchlist_signature(user_id)
+    return _cached(
+        f"watchlist_news:{user_id}:{signature}:{limit}",
+        45,
+        lambda: build_watchlist_news(
+            _cached_news(max(limit * 2, 8)),
+            load_watchlist(user_id),
+            limit=limit,
+        ),
+    )
+
+
+def _cached_watchlist_detail(user_id: int, symbol: str):
+    signature = _watchlist_signature(user_id)
+    normalized_symbol = symbol.strip().upper()
+    return _cached(
+        f"watchlist_detail:{user_id}:{signature}:{normalized_symbol}",
+        20,
+        lambda: build_watchlist_detail(user_id, normalized_symbol, MODEL, META),
+    )
+
+
+def _cached_alerts(user_id: int):
+    signature = _watchlist_signature(user_id)
+    return _cached(
+        f"alerts:{user_id}:{signature}",
+        20,
+        lambda: build_alerts(MODEL, META, user_id),
+    )
+
+
+def _cached_premarket_briefing(user_id: int):
+    signature = _watchlist_signature(user_id)
+    return _cached(
+        f"briefing_premarket:{user_id}:{signature}",
+        45,
+        lambda: build_premarket_briefing(MODEL, META, user_id),
+    )
+
+
+def _cached_calendar_catalysts(user_id: int, limit: int):
+    signature = _watchlist_signature(user_id)
+    return _cached(
+        f"calendar:{user_id}:{signature}:{limit}",
+        45,
+        lambda: build_trader_calendar(_cached_market_state(), user_id, limit=limit),
+    )
+
+
+def _cached_workspace_shared(user_id: int):
+    return _cached(
+        f"workspace_shared:{user_id}",
+        20,
+        lambda: get_shared_workspace(user_id, MODEL, META),
+    )
+
+
+def _cached_terminal_bootstrap(current_user: dict):
+    user_id = current_user["id"]
+    user_tier = str(current_user.get("tier", "free"))
+    return _cached(
+        f"terminal_bootstrap:{user_id}:{user_tier}",
+        10,
+        lambda: TerminalBootstrapResponse(
+            me=current_user,
+            prediction=_cached_prediction_latest(),
+            market_state=_cached_market_state(),
+            transitions=_cached_regime_transitions(limit=8),
+            sectors=_cached_market_sectors(8),
+            watchlist=load_watchlist(user_id),
+        ),
+    )
+
+
 def _cached_metadata():
     return _cached(
         "metadata",
@@ -218,10 +353,10 @@ def _cached_metadata():
 
 @app.get("/", tags=["system"])
 def root(request: Request):
-    if current_user_or_none := request.cookies.get(SESSION_COOKIE_NAME):
+    if token := request.cookies.get(SESSION_COOKIE_NAME):
         from app.services.auth import get_user_from_session
 
-        if get_user_from_session(current_user_or_none):
+        if get_user_from_session(token):
             return FileResponse(STATIC_DIR / "index.html")
     return FileResponse(STATIC_DIR / "login.html")
 
@@ -333,6 +468,7 @@ def billing_tier_update(
 ):
     try:
         user = update_user_tier(current_user["id"], payload.tier)
+        _invalidate_user_terminal_cache(current_user["id"])
         return {
             **user,
             "tier": get_tier_config(user["tier"])["tier"],
@@ -343,7 +479,7 @@ def billing_tier_update(
 
 @app.get("/workspace/shared", response_model=SharedWorkspace | None, tags=["workspace"])
 def workspace_shared(current_user: dict = Depends(current_user_or_401)):
-    return get_shared_workspace(current_user["id"], MODEL, META)
+    return _cached_workspace_shared(current_user["id"])
 
 
 @app.post("/workspace/shared", response_model=SharedWorkspace, tags=["workspace"])
@@ -352,7 +488,9 @@ def workspace_shared_create(
     current_user: dict = Depends(current_user_or_401),
 ):
     try:
-        return create_shared_workspace(current_user["id"], payload.name)
+        workspace = create_shared_workspace(current_user["id"], payload.name)
+        _invalidate_user_terminal_cache(current_user["id"])
+        return workspace
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -363,7 +501,9 @@ def workspace_shared_join(
     current_user: dict = Depends(current_user_or_401),
 ):
     try:
-        return join_shared_workspace(current_user["id"], payload.invite_code)
+        workspace = join_shared_workspace(current_user["id"], payload.invite_code)
+        _invalidate_user_terminal_cache(current_user["id"])
+        return workspace
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -374,7 +514,9 @@ def workspace_shared_watchlist_add(
     current_user: dict = Depends(current_user_or_401),
 ):
     try:
-        return add_shared_watchlist_item(current_user["id"], payload.symbol, payload.label)
+        workspace = add_shared_watchlist_item(current_user["id"], payload.symbol, payload.label)
+        _invalidate_user_terminal_cache(current_user["id"])
+        return workspace
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -382,7 +524,9 @@ def workspace_shared_watchlist_add(
 @app.delete("/workspace/shared/watchlist/{symbol}", response_model=SharedWorkspace, tags=["workspace"])
 def workspace_shared_watchlist_remove(symbol: str, current_user: dict = Depends(current_user_or_401)):
     try:
-        return remove_shared_watchlist_item(current_user["id"], symbol)
+        workspace = remove_shared_watchlist_item(current_user["id"], symbol)
+        _invalidate_user_terminal_cache(current_user["id"])
+        return workspace
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -393,7 +537,9 @@ def workspace_shared_note_add(
     current_user: dict = Depends(current_user_or_401),
 ):
     try:
-        return add_shared_note(current_user["id"], payload.content)
+        workspace = add_shared_note(current_user["id"], payload.content)
+        _invalidate_user_terminal_cache(current_user["id"])
+        return workspace
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -401,7 +547,9 @@ def workspace_shared_note_add(
 @app.post("/workspace/shared/briefing-snapshot", response_model=SharedWorkspace, tags=["workspace"])
 def workspace_shared_briefing_snapshot(current_user: dict = Depends(current_user_or_401)):
     try:
-        return save_shared_briefing_snapshot(current_user["id"], MODEL, META)
+        workspace = save_shared_briefing_snapshot(current_user["id"], MODEL, META)
+        _invalidate_user_terminal_cache(current_user["id"])
+        return workspace
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -438,14 +586,7 @@ def metadata():
 @app.get("/terminal/bootstrap", response_model=TerminalBootstrapResponse, tags=["terminal"])
 def terminal_bootstrap(current_user: dict = Depends(current_user_or_401)):
     try:
-        return TerminalBootstrapResponse(
-            me=current_user,
-            prediction=predict_latest(MODEL, META),
-            market_state=_cached_market_state(),
-            transitions=compute_regime_transitions(MODEL, META, limit=8),
-            sectors=_cached_market_sectors(8),
-            watchlist=load_watchlist(current_user["id"]),
-        )
+        return _cached_terminal_bootstrap(current_user)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -484,7 +625,7 @@ def regime_history(limit: int = 30, current_user: dict = Depends(current_user_or
 @app.get("/regime/transitions", response_model=list[RegimeTransition], tags=["terminal"])
 def regime_transitions(limit: int = 8, current_user: dict = Depends(current_user_or_401)):
     try:
-        return compute_regime_transitions(MODEL, META, limit=min(max(limit, 3), 12))
+        return _cached_regime_transitions(limit=min(max(limit, 3), 12))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -528,9 +669,7 @@ def world_affairs_timeline(limit: int = 6, current_user: dict = Depends(current_
 
 @app.get("/watchlist/news", response_model=list[WatchlistNewsItem], tags=["terminal"])
 def watchlist_news(limit: int = 8, current_user: dict = Depends(current_user_or_401)):
-    watchlist = load_watchlist(current_user["id"])
-    items = _cached_news(max(limit * 2, 8))
-    return build_watchlist_news(items, watchlist, limit=min(max(limit, 3), 12))
+    return _cached_watchlist_news(current_user["id"], limit=min(max(limit, 3), 12))
 
 
 @app.get("/signals/trending", response_model=list[SignalCard], tags=["terminal"])
@@ -550,7 +689,7 @@ def story_briefing(current_user: dict = Depends(current_user_or_401)):
 @app.get("/briefing/premarket", response_model=PremarketBriefing, tags=["terminal"])
 def briefing_premarket(current_user: dict = Depends(current_user_or_401)):
     try:
-        return build_premarket_briefing(MODEL, META, current_user["id"])
+        return _cached_premarket_briefing(current_user["id"])
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -567,18 +706,18 @@ def watchlist(current_user: dict = Depends(current_user_or_401)):
 
 @app.get("/watchlist/intelligence", response_model=list[WatchlistInsight], tags=["terminal"])
 def watchlist_intelligence(current_user: dict = Depends(current_user_or_401)):
-    return build_watchlist_intelligence(current_user["id"])
+    return _cached_watchlist_intelligence(current_user["id"])
 
 
 @app.get("/watchlist/exposures", response_model=list[WatchlistExposure], tags=["terminal"])
 def watchlist_exposures(current_user: dict = Depends(current_user_or_401)):
-    return build_watchlist_exposures(current_user["id"])
+    return _cached_watchlist_exposures(current_user["id"])
 
 
 @app.get("/watchlist/{symbol}/detail", response_model=WatchlistDetailResponse, tags=["terminal"])
 def watchlist_detail(symbol: str, current_user: dict = Depends(current_user_or_401)):
     try:
-        return build_watchlist_detail(current_user["id"], symbol, MODEL, META)
+        return _cached_watchlist_detail(current_user["id"], symbol)
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -586,8 +725,7 @@ def watchlist_detail(symbol: str, current_user: dict = Depends(current_user_or_4
 @app.get("/calendar/catalysts", response_model=list[CatalystEvent], tags=["terminal"])
 def calendar_catalysts(limit: int = 6, current_user: dict = Depends(current_user_or_401)):
     try:
-        state = build_market_state_summary(MODEL, META)
-        return build_trader_calendar(state, current_user["id"], limit=min(max(limit, 3), 10))
+        return _cached_calendar_catalysts(current_user["id"], limit=min(max(limit, 3), 10))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -603,13 +741,15 @@ def settings_delivery_update(
     current_user: dict = Depends(current_user_or_401),
 ):
     try:
-        return save_delivery_preferences(
+        result = save_delivery_preferences(
             current_user["id"],
             payload.email_enabled,
             payload.webhook_enabled,
             payload.webhook_url,
             payload.cadence,
         )
+        _invalidate_user_terminal_cache(current_user["id"])
+        return result
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -625,20 +765,24 @@ def delivery_global_macro_send(current_user: dict = Depends(current_user_or_401)
 @app.post("/watchlist", response_model=list[WatchlistItem], tags=["terminal"])
 def watchlist_add(request: WatchlistRequest, current_user: dict = Depends(current_user_or_401)):
     try:
-        return add_watchlist_item(current_user["id"], request.symbol, request.label)
+        watchlist_items = add_watchlist_item(current_user["id"], request.symbol, request.label)
+        _invalidate_user_terminal_cache(current_user["id"])
+        return watchlist_items
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.delete("/watchlist/{symbol}", response_model=list[WatchlistItem], tags=["terminal"])
 def watchlist_remove(symbol: str, current_user: dict = Depends(current_user_or_401)):
-    return remove_watchlist_item(current_user["id"], symbol)
+    result = remove_watchlist_item(current_user["id"], symbol)
+    _invalidate_user_terminal_cache(current_user["id"])
+    return result
 
 
 @app.get("/alerts", response_model=list[AlertItem], tags=["terminal"])
 def alerts(request: Request, current_user: dict = Depends(current_user_or_401)):
     try:
-        user_alerts = build_alerts(MODEL, META, current_user["id"])
+        user_alerts = _cached_alerts(current_user["id"])
         if user_alerts:
             log_audit_event("alerts_generated", current_user["id"], {"count": len(user_alerts), "ip": request.client.host if request.client else None})
         return user_alerts
@@ -664,6 +808,6 @@ def predict(request: PredictRequest, current_user: dict = Depends(current_user_o
 @app.post("/predict/latest", response_model=PredictResponse, tags=["inference"])
 def predict_latest_endpoint(current_user: dict = Depends(current_user_or_401)):
     try:
-        return predict_latest(MODEL, META)
+        return _cached_prediction_latest()
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

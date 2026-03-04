@@ -40,11 +40,31 @@ def fetch_sector_breadth(limit: int = 8) -> list[dict]:
 
     sectors = []
     try:
+        tickers = [symbol for symbol, _ in SECTOR_WATCH]
+        history = yf.download(
+            tickers=tickers,
+            period="6mo",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            group_by="column",
+            threads=True,
+        )
+
         for symbol, label in SECTOR_WATCH:
-            history = yf.Ticker(symbol).history(period="6mo", interval="1d", auto_adjust=True)
-            if "Close" not in history.columns or history.empty:
+            if history.empty:
                 continue
-            series = history["Close"].dropna()
+            if hasattr(history.columns, "nlevels") and history.columns.nlevels > 1:
+                if ("Close", symbol) in history.columns:
+                    series = history[("Close", symbol)].dropna()
+                elif (symbol, "Close") in history.columns:
+                    series = history[(symbol, "Close")].dropna()
+                else:
+                    continue
+            else:
+                if "Close" not in history.columns:
+                    continue
+                series = history["Close"].dropna()
             if len(series) < 21:
                 continue
             change_1d = float(series.pct_change().iloc[-1])

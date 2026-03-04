@@ -7,7 +7,10 @@ from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from sqlmodel import Session
 from app.config import ALPHA_VANTAGE_API_KEY, CALENDAR_PROVIDER
+from app.services.db import get_engine
+from app.schemas import User
 from app.services.catalysts import build_catalyst_calendar
 from app.services.subscriptions import get_tier_config
 from app.services.watchlist import load_watchlist
@@ -80,12 +83,10 @@ def fetch_verified_calendar(symbols: list[str], limit: int = 6) -> list[dict]:
 def build_trader_calendar(state: dict, user_id: int, limit: int = 8) -> list[dict]:
     watchlist = load_watchlist(user_id)
     symbols = [item["symbol"] for item in watchlist]
-    tier = None
-    from app.services.db import get_connection
-
-    with get_connection() as connection:
-        user = connection.execute("SELECT tier FROM users WHERE id = ?", (user_id,)).fetchone()
-        tier = get_tier_config(user["tier"] if user else None)
+    
+    with Session(get_engine()) as session:
+        user = session.get(User, user_id)
+        tier = get_tier_config(user.tier if user else None)
 
     verified = fetch_verified_calendar(symbols, limit=limit) if tier["verified_calendar"] else []
     session_events = build_catalyst_calendar(state, user_id, limit=limit)

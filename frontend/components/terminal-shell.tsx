@@ -277,6 +277,7 @@ type SubscriptionTier = {
   label: string;
   description: string;
   watchlist_limit: number;
+  email_delivery: boolean;
   verified_calendar: boolean;
   webhook_delivery: boolean;
   briefing_history_limit: number;
@@ -365,6 +366,44 @@ const views: { key: ViewKey; label: string; subtitle: string }[] = [
   { key: "news", label: "News", subtitle: "Catalysts" },
   { key: "system", label: "Settings", subtitle: "Model and delivery" },
 ];
+
+const tierOrder: Record<string, number> = {
+  free: 0,
+  pro: 1,
+  desk: 2,
+};
+
+const viewTierAccess: Record<ViewKey, "free" | "pro" | "desk"> = {
+  monitor: "free",
+  signals: "free",
+  system: "free",
+  briefing: "pro",
+  world: "pro",
+  markets: "pro",
+  news: "pro",
+  desk: "desk",
+};
+
+const tierWorkspaceHighlights: Record<string, string[]> = {
+  free: ["Overview", "Signals", "Settings"],
+  pro: ["Briefing", "World Affairs", "Markets", "News"],
+  desk: ["Desk workspace", "Shared alerts", "Desk snapshots"],
+};
+
+const tierUpgradeCopy: Record<string, { nextTier: string; features: string[] }> = {
+  free: {
+    nextTier: "Pro",
+    features: ["Global macro briefing", "World Affairs monitor", "Cross-asset markets", "Full news workspace"],
+  },
+  pro: {
+    nextTier: "Desk",
+    features: ["Shared workspace", "Team watchlist", "Desk notes and snapshots"],
+  },
+  desk: {
+    nextTier: "",
+    features: [],
+  },
+};
 
 const cadenceOptions = [
   { value: "premarket", label: "Pre-Market" },
@@ -456,6 +495,15 @@ function labelizeKey(value: string) {
   return value
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function hasTierAccess(userTier: string | undefined, requiredTier: "free" | "pro" | "desk") {
+  const current = tierOrder[userTier || "free"] ?? 0;
+  return current >= tierOrder[requiredTier];
+}
+
+function canAccessView(view: ViewKey, userTier: string | undefined) {
+  return hasTierAccess(userTier, viewTierAccess[view]);
 }
 
 function formatSettingValue(value: unknown) {
@@ -715,6 +763,7 @@ export default function TerminalShell() {
   });
   const [selectedTier, setSelectedTier] = useState("");
   const [deliveryResult, setDeliveryResult] = useState<BriefingDeliveryResult | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   async function loadCoreData(silent = false) {
     if (!silent) {
@@ -758,6 +807,9 @@ export default function TerminalShell() {
   }
 
   async function loadViewData(view: ViewKey, force = false) {
+    if (data && !canAccessView(view, data.me.tier)) {
+      return;
+    }
     if (!force && loadedViews[view]) {
       return;
     }
@@ -848,10 +900,12 @@ export default function TerminalShell() {
     }
   }
 
-  async function refreshActiveView() {
+  async function refreshActiveView(includeViewData = true) {
     await loadCoreData(true);
-    await loadViewData(activeView, true);
-    if (activeView === "signals" && selectedWatchlistSymbol) {
+    if (includeViewData) {
+      await loadViewData(activeView, true);
+    }
+    if (includeViewData && activeView === "signals" && selectedWatchlistSymbol) {
       await loadWatchlistDetail(selectedWatchlistSymbol);
     }
   }
@@ -869,16 +923,27 @@ export default function TerminalShell() {
   useEffect(() => {
     void loadCoreData();
     const interval = window.setInterval(() => {
-      void refreshActiveView();
-    }, 30000);
+      if (document.hidden) {
+        return;
+      }
+      const shouldRefreshActiveView = activeView === "monitor";
+      void refreshActiveView(shouldRefreshActiveView);
+    }, 45000);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [activeView]);
 
   useEffect(() => {
     if (!data) {
       return;
     }
     void loadViewData(activeView);
+  }, [activeView, data]);
+
+  useEffect(() => {
+    if (!data || canAccessView(activeView, data.me.tier)) {
+      return;
+    }
+    setActiveView("monitor");
   }, [activeView, data]);
 
   useEffect(() => {
@@ -894,6 +959,35 @@ export default function TerminalShell() {
     const interval = window.setInterval(updateClock, 1000);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!data) {
+      return;
+    }
+    const onboardingKey = `regime_onboarding_${data.me.id}_${data.me.tier}`;
+    if (!window.localStorage.getItem(onboardingKey)) {
+      setShowOnboarding(true);
+    }
+  }, [data]);
+
+  function dismissOnboarding() {
+    if (data) {
+      window.localStorage.setItem(`regime_onboarding_${data.me.id}_${data.me.tier}`, "seen");
+    }
+    setShowOnboarding(false);
+  }
+
+  function navigateToView(view: ViewKey) {
+    if (!data) {
+      setActiveView(view);
+      return;
+    }
+    if (canAccessView(view, data.me.tier)) {
+      setActiveView(view);
+      return;
+    }
+    setActiveView("system");
+  }
 
   async function handleLogout() {
     await apiFetch("/auth/logout", { method: "POST" });
@@ -1086,7 +1180,14 @@ export default function TerminalShell() {
     }
   }
 
-  const activeViewMeta = views.find((view) => view.key === activeView) || views[0];
+  const currentTier = data?.me?.tier || "free";
+  const visibleViews = views.filter((view) => canAccessView(view.key, currentTier));
+  const activeViewMeta = visibleViews.find((view) => view.key === activeView) || visibleViews[0] || views[0];
+  const currentTierHighlights = tierWorkspaceHighlights[currentTier] || tierWorkspaceHighlights.free;
+  const upgradeCopy = tierUpgradeCopy[currentTier] || tierUpgradeCopy.free;
+  const overviewIntelUnlocked = hasTierAccess(currentTier, "pro");
+  const emailUnlocked = hasTierAccess(currentTier, "pro");
+  const webhookUnlocked = hasTierAccess(currentTier, "pro");
   const guide = regimeGuide[data?.marketState.regime || ""] || regimeGuide.RiskOn;
   const bootstrapping = !data;
   const monitorHydrating = bootstrapping || !loadedViews.monitor;
@@ -1119,11 +1220,11 @@ export default function TerminalShell() {
             <p className="nt-brand-copy">Market context, catalysts, watchlists, and desk workflow.</p>
           </div>
           <nav className="nt-nav">
-          {views.map((view) => (
+          {visibleViews.map((view) => (
             <button
               key={view.key}
               className={`nt-nav-item ${activeView === view.key ? "is-active" : ""}`}
-              onClick={() => setActiveView(view.key)}
+              onClick={() => navigateToView(view.key)}
               type="button"
             >
               <strong>{view.label}</strong>
@@ -1143,6 +1244,59 @@ export default function TerminalShell() {
         </aside>
 
         <section className="nt-main">
+          {showOnboarding ? (
+            <section className="nt-overlay" role="dialog" aria-modal="true" aria-label="Welcome to Regime">
+              <div className="nt-onboarding">
+                <div className="nt-onboarding-head">
+                  <div>
+                    <span className="eyebrow">Welcome</span>
+                    <h3>Start with the workflow for your plan.</h3>
+                  </div>
+                  <span className="nt-plan-badge">{currentTier.toUpperCase()}</span>
+                </div>
+                <p className="nt-onboarding-copy">
+                  Regime works best when you move from market context into watchlist context, then into deeper macro or desk workflows as your plan unlocks them.
+                </p>
+                <div className="nt-onboarding-grid">
+                  <article className="nt-panel nt-card">
+                    <span className="eyebrow">Available Now</span>
+                    <div className="nt-chip-row">
+                      {currentTierHighlights.map((item) => (
+                        <span className="nt-chip" key={item}>{item}</span>
+                      ))}
+                    </div>
+                  </article>
+                  <article className="nt-panel nt-card">
+                    <span className="eyebrow">Start Here</span>
+                    <ol className="nt-onboarding-steps">
+                      <li>Read the market state and `What Matters Now` on Overview.</li>
+                      <li>Open Signals to review your watchlist in context.</li>
+                      <li>Use Settings to control delivery and your plan.</li>
+                    </ol>
+                  </article>
+                  {upgradeCopy.features.length ? (
+                    <article className="nt-panel nt-card">
+                      <span className="eyebrow">{`Unlock With ${upgradeCopy.nextTier}`}</span>
+                      <ul className="plain-list">
+                        {upgradeCopy.features.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </article>
+                  ) : null}
+                </div>
+                <div className="nt-onboarding-actions">
+                  <button className="button button-primary" onClick={() => { setActiveView("monitor"); dismissOnboarding(); }} type="button">
+                    Open Overview
+                  </button>
+                  <button className="button" onClick={() => { setActiveView("system"); dismissOnboarding(); }} type="button">
+                    Review Plan
+                  </button>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
           <header className="nt-header">
             <div className="nt-header-copy">
               <p className="eyebrow">Workspace</p>
@@ -1257,8 +1411,13 @@ export default function TerminalShell() {
                   <SkeletonList rows={3} />
                 ) : (
                   <div className="nt-stack">
-                    {(data?.marketState.what_matters_now?.length
-                      ? data.marketState.what_matters_now
+                    {((overviewIntelUnlocked
+                      ? data?.marketState.what_matters_now
+                      : firstItems(data?.marketState.what_matters_now, 1)
+                    )?.length
+                      ? (overviewIntelUnlocked
+                          ? data?.marketState.what_matters_now
+                          : firstItems(data?.marketState.what_matters_now, 1))
                       : [data?.marketState.summary || guide.meaning]
                     ).map((item, index) => (
                       <div className="nt-list-item" key={`matters-${item}-${index}`}>
@@ -1285,171 +1444,195 @@ export default function TerminalShell() {
                 )}
               </article>
 
-              <article className="nt-panel nt-card">
-                <span className="eyebrow">What Changed</span>
-                <ul className="plain-list">
-                  {(data?.marketState.changes_since_yesterday || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
-                </ul>
-              </article>
+              {overviewIntelUnlocked ? (
+                <>
+                  <article className="nt-panel nt-card">
+                    <span className="eyebrow">What Changed</span>
+                    <ul className="plain-list">
+                      {(data?.marketState.changes_since_yesterday || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                    </ul>
+                  </article>
 
-              <article className="nt-panel nt-card">
-                <span className="eyebrow">Supporting Signals</span>
-                <ul className="plain-list">
-                  {(data?.marketState.supporting_signals || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
-                </ul>
-              </article>
+                  <article className="nt-panel nt-card">
+                    <span className="eyebrow">Supporting Signals</span>
+                    <ul className="plain-list">
+                      {(data?.marketState.supporting_signals || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                    </ul>
+                  </article>
 
-              <article className="nt-panel nt-card">
-                <span className="eyebrow">Conflicting Signals</span>
-                <ul className="plain-list">
-                  {(data?.marketState.conflicting_signals || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
-                </ul>
-              </article>
+                  <article className="nt-panel nt-card">
+                    <span className="eyebrow">Conflicting Signals</span>
+                    <ul className="plain-list">
+                      {(data?.marketState.conflicting_signals || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                    </ul>
+                  </article>
 
-              <article className="nt-panel nt-card">
-                <span className="eyebrow">Bull vs Bear</span>
-                {bootstrapping ? (
-                  <div className="nt-split">
-                    <SkeletonList rows={3} />
-                    <SkeletonList rows={3} />
-                  </div>
-                ) : (
-                  <div className="nt-split nt-thesis-grid">
-                    <div className="nt-thesis-column">
-                      <h4>Bull Case</h4>
-                      <ul className="plain-list">
-                        {bullCaseItems.map((item, index) => (
-                          <li key={`bull-${item}-${index}`}>{item}</li>
+                  <article className="nt-panel nt-card">
+                    <span className="eyebrow">Bull vs Bear</span>
+                    {bootstrapping ? (
+                      <div className="nt-split">
+                        <SkeletonList rows={3} />
+                        <SkeletonList rows={3} />
+                      </div>
+                    ) : (
+                      <div className="nt-split nt-thesis-grid">
+                        <div className="nt-thesis-column">
+                          <h4>Bull Case</h4>
+                          <ul className="plain-list">
+                            {bullCaseItems.map((item, index) => (
+                              <li key={`bull-${item}-${index}`}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div className="nt-thesis-column">
+                          <h4>Bear Case</h4>
+                          <ul className="plain-list">
+                            {bearCaseItems.map((item, index) => (
+                              <li key={`bear-${item}-${index}`}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    )}
+                  </article>
+
+                  <article className="nt-panel nt-card">
+                    <span className="eyebrow">Why This Regime</span>
+                    <div className="nt-stack">
+                      {firstItems(data?.marketState.drivers, 4).map((driver) => (
+                        <div className="nt-list-item" key={`${driver.label}-${driver.value}`}>
+                          <strong>{driver.label}</strong>
+                          <span className={toneClass(driver.tone)}>{driver.value}</span>
+                        </div>
+                      ))}
+                      {!data?.marketState.drivers.length ? <SkeletonList rows={3} /> : null}
+                    </div>
+                  </article>
+
+                  <article className="nt-panel nt-card">
+                    <span className="eyebrow">Next Step</span>
+                    <div className="nt-stack">
+                      {(data?.marketState.next_steps || []).map((item, index) => (
+                        <div className="nt-list-item" key={`${item}-${index}`}>
+                          <p>{item}</p>
+                        </div>
+                      ))}
+                      <div className="nt-actions">
+                        <button className="button button-primary" onClick={() => navigateToView("signals")} type="button">
+                          Open Watchlist Context
+                        </button>
+                        <button className="button" onClick={() => navigateToView(hasTierAccess(currentTier, "pro") ? "world" : "system")} type="button">
+                          {hasTierAccess(currentTier, "pro") ? "Open World Affairs" : "Unlock Deeper Intel"}
+                        </button>
+                      </div>
+                    </div>
+                  </article>
+
+                  <article className="nt-panel nt-card">
+                    <span className="eyebrow">Transition History</span>
+                    <div className="nt-stack">
+                      {(data?.transitions || []).map((item) => (
+                        <div className="nt-list-item" key={`${item.regime}-${item.started_at}`}>
+                          <strong>{item.regime}</strong>
+                          <span>{item.started_at} to {item.ended_at}</span>
+                          <span>{item.duration_days}d / {Math.round(item.average_confidence * 100)}%</span>
+                        </div>
+                      ))}
+                      {!data?.transitions.length ? <SkeletonList rows={3} /> : null}
+                    </div>
+                  </article>
+
+                  <article className="nt-panel nt-card">
+                    <span className="eyebrow">Leaders / Laggards</span>
+                    <div className="nt-split">
+                      <div className="nt-stack">
+                        <h4>Leaders</h4>
+                        {firstItems(data?.marketState.leaders, 4).map((item) => (
+                          <div className="nt-symbol" key={`leader-${item.symbol}`}>
+                            <div>
+                              <strong>{item.symbol}</strong>
+                              <span>{item.label}</span>
+                            </div>
+                            <div>
+                              <span>{item.metric}</span>
+                              <strong className={metricClass(item.value)}>{item.value.toFixed(2)}</strong>
+                            </div>
+                          </div>
                         ))}
-                      </ul>
-                    </div>
-                    <div className="nt-thesis-column">
-                      <h4>Bear Case</h4>
-                      <ul className="plain-list">
-                        {bearCaseItems.map((item, index) => (
-                          <li key={`bear-${item}-${index}`}>{item}</li>
+                        {!data?.marketState.leaders.length ? <SkeletonSymbolList rows={3} /> : null}
+                      </div>
+                      <div className="nt-stack">
+                        <h4>Laggards</h4>
+                        {firstItems(data?.marketState.laggards, 4).map((item) => (
+                          <div className="nt-symbol" key={`laggard-${item.symbol}`}>
+                            <div>
+                              <strong>{item.symbol}</strong>
+                              <span>{item.label}</span>
+                            </div>
+                            <div>
+                              <span>{item.metric}</span>
+                              <strong className={metricClass(item.value)}>{item.value.toFixed(2)}</strong>
+                            </div>
+                          </div>
                         ))}
-                      </ul>
+                        {!data?.marketState.laggards.length ? <SkeletonSymbolList rows={3} /> : null}
+                      </div>
                     </div>
-                  </div>
-                )}
-              </article>
+                  </article>
 
-              <article className="nt-panel nt-card">
-                <span className="eyebrow">Why This Regime</span>
-                <div className="nt-stack">
-                  {firstItems(data?.marketState.drivers, 4).map((driver) => (
-                    <div className="nt-list-item" key={`${driver.label}-${driver.value}`}>
-                      <strong>{driver.label}</strong>
-                      <span className={toneClass(driver.tone)}>{driver.value}</span>
+                  <article className="nt-panel nt-card">
+                    <span className="eyebrow">Alerts</span>
+                    <div className="nt-stack">
+                      {firstItems(data?.alerts, 4).map((alert) => (
+                        <div className={`nt-alert ${alert.severity}`} key={`${alert.title}-${alert.message}`}>
+                          <strong>{alert.title}</strong>
+                          <p>{alert.message}</p>
+                        </div>
+                      ))}
+                      {monitorHydrating && !data?.alerts.length ? <SkeletonList rows={3} /> : null}
                     </div>
-                  ))}
-                  {!data?.marketState.drivers.length ? <SkeletonList rows={3} /> : null}
-                </div>
-              </article>
+                  </article>
 
-              <article className="nt-panel nt-card">
-                <span className="eyebrow">Next Step</span>
-                <div className="nt-stack">
-                  {(data?.marketState.next_steps || []).map((item, index) => (
-                    <div className="nt-list-item" key={`${item}-${index}`}>
-                      <p>{item}</p>
+                  <article className="nt-panel nt-card">
+                    <span className="eyebrow">Sector Breadth</span>
+                    <div className="nt-stack">
+                      {firstItems(data?.sectors, 6).map((sector) => (
+                        <div className="nt-symbol" key={sector.symbol}>
+                          <div>
+                            <strong>{sector.symbol}</strong>
+                            <span>{sector.label}</span>
+                          </div>
+                          <div>
+                            <span>{sector.signal}</span>
+                            <strong className={metricClass(sector.change_1d)}>{formatPercent(sector.change_1d)}</strong>
+                          </div>
+                        </div>
+                      ))}
+                      {!data?.sectors.length ? <SkeletonSymbolList rows={4} /> : null}
                     </div>
-                  ))}
-                  <div className="nt-actions">
-                    <button className="button button-primary" onClick={() => setActiveView("signals")} type="button">
-                      Open Watchlist Context
-                    </button>
-                    <button className="button" onClick={() => setActiveView("world")} type="button">
-                      Open World Affairs
-                    </button>
-                  </div>
-                </div>
-              </article>
-
-              <article className="nt-panel nt-card">
-                <span className="eyebrow">Transition History</span>
-                <div className="nt-stack">
-                  {(data?.transitions || []).map((item) => (
-                    <div className="nt-list-item" key={`${item.regime}-${item.started_at}`}>
-                      <strong>{item.regime}</strong>
-                      <span>{item.started_at} to {item.ended_at}</span>
-                      <span>{item.duration_days}d / {Math.round(item.average_confidence * 100)}%</span>
-                    </div>
-                  ))}
-                  {!data?.transitions.length ? <SkeletonList rows={3} /> : null}
-                </div>
-              </article>
-
-              <article className="nt-panel nt-card">
-                <span className="eyebrow">Leaders / Laggards</span>
-                <div className="nt-split">
+                  </article>
+                </>
+              ) : (
+                <article className="nt-panel nt-card">
+                  <span className="eyebrow">Unlock Deeper Overview</span>
                   <div className="nt-stack">
-                    <h4>Leaders</h4>
-                    {firstItems(data?.marketState.leaders, 4).map((item) => (
-                      <div className="nt-symbol" key={`leader-${item.symbol}`}>
-                        <div>
-                          <strong>{item.symbol}</strong>
-                          <span>{item.label}</span>
-                        </div>
-                        <div>
-                          <span>{item.metric}</span>
-                          <strong className={metricClass(item.value)}>{item.value.toFixed(2)}</strong>
-                        </div>
-                      </div>
-                    ))}
-                    {!data?.marketState.leaders.length ? <SkeletonSymbolList rows={3} /> : null}
-                  </div>
-                  <div className="nt-stack">
-                    <h4>Laggards</h4>
-                    {firstItems(data?.marketState.laggards, 4).map((item) => (
-                      <div className="nt-symbol" key={`laggard-${item.symbol}`}>
-                        <div>
-                          <strong>{item.symbol}</strong>
-                          <span>{item.label}</span>
-                        </div>
-                        <div>
-                          <span>{item.metric}</span>
-                          <strong className={metricClass(item.value)}>{item.value.toFixed(2)}</strong>
-                        </div>
-                      </div>
-                    ))}
-                    {!data?.marketState.laggards.length ? <SkeletonSymbolList rows={3} /> : null}
-                  </div>
-                </div>
-              </article>
-
-              <article className="nt-panel nt-card">
-                <span className="eyebrow">Alerts</span>
-                <div className="nt-stack">
-                  {firstItems(data?.alerts, 4).map((alert) => (
-                    <div className={`nt-alert ${alert.severity}`} key={`${alert.title}-${alert.message}`}>
-                      <strong>{alert.title}</strong>
-                      <p>{alert.message}</p>
+                    <p className="muted-copy">
+                      Free shows the top-line market read. Upgrade to unlock deeper regime interpretation, signal conflict, sector breadth, alert context, and transition history.
+                    </p>
+                    <ul className="plain-list">
+                      <li>What changed since the prior session</li>
+                      <li>Supporting and conflicting signals</li>
+                      <li>Bull vs bear framing and next-step guidance</li>
+                      <li>Sector breadth, leaders, laggards, and alert context</li>
+                    </ul>
+                    <div className="nt-actions">
+                      <button className="button button-primary" onClick={() => navigateToView("system")} type="button">
+                        Review Plans
+                      </button>
                     </div>
-                  ))}
-                  {monitorHydrating && !data?.alerts.length ? <SkeletonList rows={3} /> : null}
-                </div>
-              </article>
-
-              <article className="nt-panel nt-card">
-                <span className="eyebrow">Sector Breadth</span>
-                <div className="nt-stack">
-                  {firstItems(data?.sectors, 6).map((sector) => (
-                    <div className="nt-symbol" key={sector.symbol}>
-                      <div>
-                        <strong>{sector.symbol}</strong>
-                        <span>{sector.label}</span>
-                      </div>
-                      <div>
-                        <span>{sector.signal}</span>
-                        <strong className={metricClass(sector.change_1d)}>{formatPercent(sector.change_1d)}</strong>
-                      </div>
-                    </div>
-                  ))}
-                  {!data?.sectors.length ? <SkeletonSymbolList rows={4} /> : null}
-                </div>
-              </article>
+                  </div>
+                </article>
+              )}
             </section>
           ) : null}
 
@@ -2064,6 +2247,11 @@ export default function TerminalShell() {
                 <div className="nt-plan-current">
                   <span className="eyebrow">Current Plan</span>
                   <strong>{data?.me?.tier?.toUpperCase() || "--"}</strong>
+                  <div className="nt-chip-row">
+                    {currentTierHighlights.map((item) => (
+                      <span className="nt-chip" key={item}>{item}</span>
+                    ))}
+                  </div>
                   <form className="nt-plan-form" onSubmit={(event) => void handleTierSubmit(event)}>
                     <select className="nt-input nt-select" onChange={(event) => setSelectedTier(event.target.value)} value={selectedTier}>
                       {(data?.tiers || []).map((tier) => (
@@ -2087,24 +2275,26 @@ export default function TerminalShell() {
                       <span className="eyebrow">Destinations</span>
                       <label className="nt-simple-toggle">
                         <input
+                          disabled={!emailUnlocked}
                           checked={deliveryForm.email_enabled}
                           onChange={(event) => setDeliveryForm((current) => ({ ...current, email_enabled: event.target.checked }))}
                           type="checkbox"
                         />
                         <div>
                           <strong>Email Briefing</strong>
-                          <span>Send the macro briefing to your account email.</span>
+                          <span>{emailUnlocked ? "Send the macro briefing to your account email." : "Available on Pro and Desk plans."}</span>
                         </div>
                       </label>
                       <label className="nt-simple-toggle">
                         <input
+                          disabled={!webhookUnlocked}
                           checked={deliveryForm.webhook_enabled}
                           onChange={(event) => setDeliveryForm((current) => ({ ...current, webhook_enabled: event.target.checked }))}
                           type="checkbox"
                         />
                         <div>
                           <strong>Webhook Delivery</strong>
-                          <span>Forward updates into an external workflow.</span>
+                          <span>{webhookUnlocked ? "Forward updates into an external workflow." : "Available on Pro and Desk plans."}</span>
                         </div>
                       </label>
                     </div>
@@ -2147,7 +2337,7 @@ export default function TerminalShell() {
                     <button className="button button-primary nt-settings-button" disabled={saving === "delivery"} type="submit">
                       {saving === "delivery" ? "Saving..." : "Save Preferences"}
                     </button>
-                    <button className="button nt-settings-button" disabled={saving === "macro-delivery"} onClick={() => void handleMacroDeliverySend()} type="button">
+                    <button className="button nt-settings-button" disabled={saving === "macro-delivery" || !emailUnlocked} onClick={() => void handleMacroDeliverySend()} type="button">
                       {saving === "macro-delivery" ? "Sending..." : "Send Global Macro Brief"}
                     </button>
                   </div>

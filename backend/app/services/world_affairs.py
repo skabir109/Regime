@@ -4,12 +4,16 @@ from app.services.watchlist import load_watchlist
 
 THEME_RULES = [
     {
-        "theme": "Central Banks",
-        "keywords": ["fed", "ecb", "boj", "central bank", "powell", "rate", "yield", "treasury", "inflation"],
+        "theme": "Monetary Policy",
+        "keywords": ["fed", "ecb", "boj", "central bank", "powell", "rate hike", "rate cut", "pivot", "hawkish", "dovish", "tightening", "easing"],
         "region": "Global",
         "urgency": "high",
         "severity": "high",
         "affected_assets": ["US Treasuries", "USD", "Gold", "Growth Equities", "Banks"],
+        "directional_bias": {
+            "hawkish": {"asset": "USD", "bias": "Bullish", "reason": "Higher yields support currency attractiveness."},
+            "dovish": {"asset": "Equities", "bias": "Bullish", "reason": "Lower discount rates support valuations."},
+        },
         "market_view": [
             "Higher-rate signals pressure long-duration equities and support the dollar.",
             "Softer inflation or dovish policy can support risk assets and rate-sensitive sectors.",
@@ -21,8 +25,25 @@ THEME_RULES = [
         "why": "Central bank policy changes discount rates, liquidity conditions, and global risk appetite.",
     },
     {
-        "theme": "Energy Shock",
-        "keywords": ["oil", "gas", "opec", "crude", "energy", "refinery"],
+        "theme": "Inflation & Data",
+        "keywords": ["cpi", "pce", "inflation", "jobs report", "payrolls", "unemployment", "gdp", "retail sales"],
+        "region": "Global",
+        "urgency": "high",
+        "severity": "high",
+        "affected_assets": ["Rates", "USD", "Equities", "Inflation Breakevens"],
+        "market_view": [
+            "Hot inflation data forces a hawkish repricing of the curve.",
+            "Weak employment data raises recession fears but may pull forward rate cuts.",
+        ],
+        "second_order_effects": [
+            "Real yield volatility.",
+            "Consumer spending outlook shifts.",
+        ],
+        "why": "Economic data prints drive the 'reaction function' of central banks and market growth expectations.",
+    },
+    {
+        "theme": "Energy & Commodities",
+        "keywords": ["oil", "gas", "opec", "crude", "energy", "refinery", "inventory", "brent", "wti", "lng"],
         "region": "Global",
         "urgency": "high",
         "severity": "high",
@@ -38,8 +59,8 @@ THEME_RULES = [
         "why": "Energy shocks flow through inflation, transport costs, and consumer purchasing power.",
     },
     {
-        "theme": "War And Security",
-        "keywords": ["war", "missile", "attack", "military", "ceasefire", "troop", "defense", "drone"],
+        "theme": "Geopolitical Conflict",
+        "keywords": ["war", "missile", "attack", "military", "ceasefire", "troop", "defense", "drone", "escalation", "invasion"],
         "region": "Geopolitical",
         "urgency": "high",
         "severity": "high",
@@ -55,8 +76,25 @@ THEME_RULES = [
         "why": "Conflict reprices energy, logistics, safe havens, and overall risk appetite.",
     },
     {
-        "theme": "Trade And Sanctions",
-        "keywords": ["tariff", "sanction", "trade", "export control", "restriction", "duty"],
+        "theme": "Crypto & Digital Assets",
+        "keywords": ["bitcoin", "ethereum", "crypto", "sec", "etf", "blockchain", "halving", "binance", "coinbase"],
+        "region": "Digital",
+        "urgency": "medium",
+        "severity": "medium",
+        "affected_assets": ["BTC", "COIN", "NVDA", "Tech Equities"],
+        "market_view": [
+            "Crypto strength often signals high retail liquidity and risk-on appetite.",
+            "Regulatory crackdowns can trigger broader deleveraging in speculative pockets.",
+        ],
+        "second_order_effects": [
+            "Correlated moves in high-beta tech.",
+            "Shifts in 'on-chain' liquidity and stablecoin flows.",
+        ],
+        "why": "Crypto has become a high-velocity proxy for global liquidity and speculative risk-taking.",
+    },
+    {
+        "theme": "Trade & Protectionism",
+        "keywords": ["tariff", "sanction", "trade", "export control", "restriction", "duty", "commerce", "blockade"],
         "region": "Global",
         "urgency": "medium",
         "severity": "medium",
@@ -72,8 +110,8 @@ THEME_RULES = [
         "why": "Trade restrictions alter supply chains, demand visibility, and cross-border pricing power.",
     },
     {
-        "theme": "China Growth",
-        "keywords": ["china", "beijing", "property", "stimulus", "yuan", "manufacturing"],
+        "theme": "China Economy",
+        "keywords": ["china", "beijing", "property", "stimulus", "yuan", "manufacturing", "pbooc", "evergrande"],
         "region": "China",
         "urgency": "medium",
         "severity": "medium",
@@ -88,54 +126,24 @@ THEME_RULES = [
         ],
         "why": "China remains a major demand engine for global cyclicals and commodity-linked assets.",
     },
-    {
-        "theme": "Shipping And Supply Chains",
-        "keywords": ["shipping", "freight", "red sea", "canal", "container", "supply chain", "port"],
-        "region": "Global Logistics",
-        "urgency": "high",
-        "severity": "medium",
-        "affected_assets": ["Shipping", "Retail", "Industrials", "Oil"],
-        "market_view": [
-            "Shipping stress can support freight-sensitive names but pressure importers and retailers.",
-            "Extended disruption can reprice inventory and delivery expectations.",
-        ],
-        "second_order_effects": [
-            "Input-cost inflation and inventory delays.",
-            "Routing changes that affect energy and goods timing.",
-        ],
-        "why": "Logistics disruption affects input costs, delivery reliability, and inflation transmission.",
-    },
-    {
-        "theme": "Elections And Policy",
-        "keywords": ["election", "vote", "parliament", "congress", "policy", "government", "budget"],
-        "region": "Political",
-        "urgency": "medium",
-        "severity": "medium",
-        "affected_assets": ["Rates", "Defense", "Healthcare", "Banks"],
-        "market_view": [
-            "Policy uncertainty can delay risk-taking and increase sector-specific dispersion.",
-            "Election outcomes may reprice regulation, spending, and tax-sensitive groups.",
-        ],
-        "second_order_effects": [
-            "Sector rotation based on expected policy winners and losers.",
-            "Budget and fiscal expectations moving rates markets.",
-        ],
-        "why": "Political transitions shape spending, regulation, taxes, and fiscal expectations.",
-    },
 ]
 
 
 WATCHLIST_EXPOSURES = {
-    "NVDA": {"sensitivity": "High", "themes": ["Trade And Sanctions", "China Growth"], "market_links": ["Semiconductors", "Export Controls", "AI Capex"]},
-    "AMD": {"sensitivity": "High", "themes": ["Trade And Sanctions", "China Growth"], "market_links": ["Semiconductors", "PC Demand", "Data Center Spend"]},
-    "AAPL": {"sensitivity": "Medium", "themes": ["China Growth", "Trade And Sanctions", "Shipping And Supply Chains"], "market_links": ["Consumer Demand", "Hardware Supply Chain"]},
-    "TSLA": {"sensitivity": "High", "themes": ["China Growth", "Energy Shock", "Trade And Sanctions"], "market_links": ["EV Demand", "Battery Inputs", "China Production"]},
+    "NVDA": {"sensitivity": "High", "themes": ["Trade & Protectionism", "China Economy", "Crypto & Digital Assets"], "market_links": ["Semiconductors", "Export Controls", "AI Capex"]},
+    "AMD": {"sensitivity": "High", "themes": ["Trade & Protectionism", "China Economy"], "market_links": ["Semiconductors", "PC Demand", "Data Center Spend"]},
+    "AAPL": {"sensitivity": "Medium", "themes": ["China Economy", "Trade & Protectionism"], "market_links": ["Consumer Demand", "Hardware Supply Chain"]},
+    "TSLA": {"sensitivity": "High", "themes": ["China Economy", "Energy & Commodities", "Trade & Protectionism"], "market_links": ["EV Demand", "Battery Inputs", "China Production"]},
     "META": {"sensitivity": "Low", "themes": ["Elections And Policy"], "market_links": ["Advertising", "Platform Regulation"]},
-    "AMZN": {"sensitivity": "Medium", "themes": ["Shipping And Supply Chains", "Energy Shock"], "market_links": ["Retail Logistics", "Consumer Margins"]},
+    "AMZN": {"sensitivity": "Medium", "themes": ["Energy & Commodities"], "market_links": ["Retail Logistics", "Consumer Margins"]},
     "GOOGL": {"sensitivity": "Low", "themes": ["Elections And Policy"], "market_links": ["Advertising", "Regulation"]},
-    "XOM": {"sensitivity": "High", "themes": ["Energy Shock", "War And Security"], "market_links": ["Oil", "Global Supply"]},
-    "CVX": {"sensitivity": "High", "themes": ["Energy Shock", "War And Security"], "market_links": ["Oil", "Global Supply"]},
-    "LMT": {"sensitivity": "High", "themes": ["War And Security", "Elections And Policy"], "market_links": ["Defense Spending", "Security Risk"]},
+    "XOM": {"sensitivity": "High", "themes": ["Energy & Commodities", "Geopolitical Conflict"], "market_links": ["Oil", "Global Supply"]},
+    "CVX": {"sensitivity": "High", "themes": ["Energy & Commodities", "Geopolitical Conflict"], "market_links": ["Oil", "Global Supply"]},
+    "LMT": {"sensitivity": "High", "themes": ["Geopolitical Conflict"], "market_links": ["Defense Spending", "Security Risk"]},
+    "TLT": {"sensitivity": "Extreme", "themes": ["Monetary Policy", "Inflation & Data"], "market_links": ["US Treasuries", "Discount Rates"]},
+    "GLD": {"sensitivity": "High", "themes": ["Geopolitical Conflict", "Monetary Policy", "Inflation & Data"], "market_links": ["Safe Haven", "Real Yields"]},
+    "BITO": {"sensitivity": "Extreme", "themes": ["Crypto & Digital Assets", "Monetary Policy"], "market_links": ["Liquidity Proxy", "Speculative Risk"]},
+    "SPY": {"sensitivity": "Medium", "themes": ["Monetary Policy", "Inflation & Data", "China Economy"], "market_links": ["Broad Market Beta", "Earnings Growth"]},
 }
 
 
@@ -160,9 +168,42 @@ def _match_theme(text: str) -> dict:
     }
 
 
+def _calculate_sentiment(text: str, theme: str) -> dict:
+    lowered = text.lower()
+    positive_words = ["stimulus", "easing", "cut", "support", "growth", "recovery", "dovish", "peace", "ceasefire", "lower inflation"]
+    negative_words = ["hike", "inflation", "war", "conflict", "sanction", "tariff", "recession", "weakness", "hawkish", "restriction"]
+    
+    pos_score = sum(1 for word in positive_words if word in lowered)
+    neg_score = sum(1 for word in negative_words if word in lowered)
+    
+    sentiment = "Neutral"
+    if pos_score > neg_score:
+        sentiment = "Positive"
+    elif neg_score > pos_score:
+        sentiment = "Negative"
+        
+    # Map directional bias based on sentiment and theme
+    bias = "Mixed"
+    if theme == "Monetary Policy":
+        if "hike" in lowered or "hawkish" in lowered:
+            bias = "Bearish for Equities / Bullish for USD"
+        elif "cut" in lowered or "dovish" in lowered:
+            bias = "Bullish for Equities / Bearish for USD"
+    elif theme == "Geopolitical Conflict":
+        if sentiment == "Negative":
+            bias = "Bullish for Gold & Defense / Bearish for Risk"
+    elif theme == "Inflation & Data":
+        if "hot" in lowered or "higher" in lowered:
+            bias = "Bearish for Equities / Bullish for Rates"
+            
+    return {"sentiment": sentiment, "directional_bias": bias}
+
+
 def classify_world_affairs_event(item: dict) -> dict:
     text = f'{item.get("title", "")} {item.get("summary") or ""}'
     rule = _match_theme(text)
+    impact = _calculate_sentiment(text, rule["theme"])
+    
     return {
         "title": item["title"],
         "source": item["source"],
@@ -173,6 +214,8 @@ def classify_world_affairs_event(item: dict) -> dict:
         "region": rule["region"],
         "urgency": rule["urgency"],
         "severity": rule["severity"],
+        "sentiment": impact["sentiment"],
+        "directional_bias": impact["directional_bias"],
         "affected_assets": rule["affected_assets"],
         "market_view": rule["market_view"],
         "second_order_effects": rule["second_order_effects"],
@@ -339,7 +382,17 @@ def build_watchlist_exposures(user_id: int) -> list[dict]:
         )
 
         active_matches = [theme for theme in base["themes"] if theme in active_themes]
-        drivers = [active_themes[theme]["why_it_matters"] for theme in active_matches]
+        drivers = []
+        sentiment = "Neutral"
+        bias = "Mixed"
+        
+        for theme in active_matches:
+            event = active_themes[theme]
+            drivers.append(f'{theme}: {event["sentiment"]} sentiment - {event["directional_bias"]}')
+            if sentiment == "Neutral":
+                sentiment = event["sentiment"]
+                bias = event["directional_bias"]
+            
         if not drivers:
             drivers = [f'{item["symbol"]} is mainly exposed to {", ".join(base["market_links"][:2])}.']
 
@@ -348,6 +401,8 @@ def build_watchlist_exposures(user_id: int) -> list[dict]:
                 "symbol": item["symbol"],
                 "label": item["label"],
                 "sensitivity": base["sensitivity"],
+                "sentiment": sentiment,
+                "directional_bias": bias,
                 "themes": active_matches or base["themes"][:2],
                 "drivers": drivers[:3],
                 "market_links": base["market_links"][:3],

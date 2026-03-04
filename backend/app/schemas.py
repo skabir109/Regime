@@ -1,6 +1,126 @@
 from datetime import datetime
-
+from typing import Optional, List
 from pydantic import BaseModel, Field
+from sqlmodel import SQLModel, Field as SQLField, Relationship
+
+
+class User(SQLModel, table=True):
+    __tablename__ = "users"
+    id: Optional[int] = SQLField(default=None, primary_key=True)
+    email: str = SQLField(unique=True, index=True)
+    name: str
+    password_hash: str
+    tier: str = SQLField(default="free")
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    is_verified: bool = SQLField(default=False)
+    verification_token: Optional[str] = None
+    reset_token: Optional[str] = None
+    reset_token_expires_at: Optional[datetime] = None
+
+    sessions: List["DBSession"] = Relationship(back_populates="user")
+    watchlist_items: List["WatchlistItemDB"] = Relationship(back_populates="user")
+    delivery_preferences: Optional["DeliveryPreferencesDB"] = Relationship(back_populates="user")
+
+
+class DBSession(SQLModel, table=True):
+    __tablename__ = "sessions"
+    id: Optional[int] = SQLField(default=None, primary_key=True)
+    user_id: int = SQLField(foreign_key="users.id", ondelete="CASCADE")
+    token_hash: str = SQLField(unique=True, index=True)
+    expires_at: datetime
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+    user: User = Relationship(back_populates="sessions")
+
+
+class WatchlistItemDB(SQLModel, table=True):
+    __tablename__ = "watchlist_items"
+    id: Optional[int] = SQLField(default=None, primary_key=True)
+    user_id: int = SQLField(foreign_key="users.id", ondelete="CASCADE")
+    symbol: str
+    label: str
+    added_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+    user: User = Relationship(back_populates="watchlist_items")
+
+
+class BriefingHistoryDB(SQLModel, table=True):
+    __tablename__ = "briefing_history"
+    id: Optional[int] = SQLField(default=None, primary_key=True)
+    user_id: int = SQLField(foreign_key="users.id", ondelete="CASCADE")
+    briefing_date: str
+    headline: str
+    overview: str
+    payload_json: str
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+
+class DeliveryPreferencesDB(SQLModel, table=True):
+    __tablename__ = "delivery_preferences"
+    user_id: int = SQLField(primary_key=True, foreign_key="users.id", ondelete="CASCADE")
+    email_enabled: bool = SQLField(default=False)
+    webhook_enabled: bool = SQLField(default=False)
+    webhook_url: Optional[str] = None
+    cadence: str = SQLField(default="premarket")
+    updated_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+    user: User = Relationship(back_populates="delivery_preferences")
+
+
+class AuditLogDB(SQLModel, table=True):
+    __tablename__ = "audit_logs"
+    id: Optional[int] = SQLField(default=None, primary_key=True)
+    event_type: str
+    user_id: Optional[int] = SQLField(default=None, foreign_key="users.id", ondelete="SET NULL")
+    details: str
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+
+class SharedWorkspaceDB(SQLModel, table=True):
+    __tablename__ = "shared_workspaces"
+    id: Optional[int] = SQLField(default=None, primary_key=True)
+    owner_user_id: int = SQLField(foreign_key="users.id", ondelete="CASCADE")
+    name: str
+    invite_code: str = SQLField(unique=True)
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+
+class SharedWorkspaceMemberDB(SQLModel, table=True):
+    __tablename__ = "shared_workspace_members"
+    workspace_id: int = SQLField(primary_key=True, foreign_key="shared_workspaces.id", ondelete="CASCADE")
+    user_id: int = SQLField(primary_key=True, foreign_key="users.id", ondelete="CASCADE")
+    role: str
+    joined_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+
+class SharedWatchlistItemDB(SQLModel, table=True):
+    __tablename__ = "shared_watchlist_items"
+    id: Optional[int] = SQLField(default=None, primary_key=True)
+    workspace_id: int = SQLField(foreign_key="shared_workspaces.id", ondelete="CASCADE")
+    symbol: str
+    label: str
+    added_by_user_id: int = SQLField(foreign_key="users.id", ondelete="CASCADE")
+    added_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+
+class SharedWorkspaceNoteDB(SQLModel, table=True):
+    __tablename__ = "shared_workspace_notes"
+    id: Optional[int] = SQLField(default=None, primary_key=True)
+    workspace_id: int = SQLField(foreign_key="shared_workspaces.id", ondelete="CASCADE")
+    author_user_id: int = SQLField(foreign_key="users.id", ondelete="CASCADE")
+    content: str
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+
+class SharedBriefingSnapshotDB(SQLModel, table=True):
+    __tablename__ = "shared_briefing_snapshots"
+    id: Optional[int] = SQLField(default=None, primary_key=True)
+    workspace_id: int = SQLField(foreign_key="shared_workspaces.id", ondelete="CASCADE")
+    author_user_id: int = SQLField(foreign_key="users.id", ondelete="CASCADE")
+    headline: str
+    overview: str
+    payload_json: str
+    created_at: datetime = SQLField(default_factory=datetime.utcnow)
 
 
 class PredictRequest(BaseModel):
@@ -65,6 +185,8 @@ class WorldAffairsEvent(BaseModel):
     region: str
     urgency: str
     severity: str
+    sentiment: str = "Neutral"
+    directional_bias: str = "Mixed"
     affected_assets: list[str] = []
     market_view: list[str] = []
     second_order_effects: list[str] = []
@@ -282,6 +404,8 @@ class WatchlistExposure(BaseModel):
     symbol: str
     label: str
     sensitivity: str
+    sentiment: str = ""
+    directional_bias: str = ""
     themes: list[str] = []
     drivers: list[str] = []
     market_links: list[str] = []
@@ -350,6 +474,7 @@ class SubscriptionTier(BaseModel):
     label: str
     description: str
     watchlist_limit: int
+    email_delivery: bool
     verified_calendar: bool
     webhook_delivery: bool
     briefing_history_limit: int

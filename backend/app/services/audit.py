@@ -1,20 +1,17 @@
 import json
 from datetime import datetime, timezone
-
-from app.services.db import get_connection
+from sqlmodel import Session
+from app.services.db import get_engine
+from app.schemas import AuditLogDB
 
 
 def log_audit_event(event_type: str, user_id: int | None, details: dict) -> None:
-    with get_connection() as connection:
-        connection.execute(
-            """
-            INSERT INTO audit_logs (event_type, user_id, details, created_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (
-                event_type,
-                user_id,
-                json.dumps(details),
-                datetime.now(timezone.utc).isoformat(),
-            ),
+    with Session(get_engine()) as session:
+        log = AuditLogDB(
+            event_type=event_type,
+            user_id=user_id,
+            details=json.dumps(details),
+            created_at=datetime.now(timezone.utc)
         )
+        session.add(log)
+        session.commit()

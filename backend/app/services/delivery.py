@@ -2,8 +2,12 @@ import json
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from sqlmodel import Session
 from app.services.audit import log_audit_event
 from app.services.preferences import get_delivery_preferences
+from app.services.db import get_engine
+from app.schemas import User
+from app.services.subscriptions import get_tier_config
 from app.services.world_affairs import build_world_affairs_briefing
 
 
@@ -24,12 +28,18 @@ def send_global_macro_briefing(user_id: int) -> dict:
     preferences = get_delivery_preferences(user_id)
     payload = _build_delivery_payload(user_id)
     channels = []
+    
+    with Session(get_engine()) as session:
+        user = session.get(User, user_id)
+        tier = get_tier_config(user.tier if user else None)
 
     email_status = "disabled"
-    if preferences["email_enabled"]:
+    if preferences["email_enabled"] and tier.get("email_delivery", False):
         email_status = "queued"
         channels.append("email")
         log_audit_event("global_macro_email_queued", user_id, payload)
+    elif preferences["email_enabled"] and not tier.get("email_delivery", False):
+        email_status = "restricted"
 
     webhook_status = "disabled"
     webhook_url = preferences.get("webhook_url", "").strip()

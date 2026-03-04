@@ -159,6 +159,21 @@ def _fallback_card(symbol: str, label: str) -> dict:
     return _build_monitor_card(symbol, label)
 
 
+def _extract_close_series(frame, ticker: str):
+    if frame is None or getattr(frame, "empty", True):
+        return None
+    # MultiIndex path: columns like ("Close", "AAPL")
+    if hasattr(frame.columns, "nlevels") and frame.columns.nlevels > 1:
+        if ("Close", ticker) in frame.columns:
+            return frame[("Close", ticker)].dropna()
+        if (ticker, "Close") in frame.columns:
+            return frame[(ticker, "Close")].dropna()
+    # Single ticker fallback
+    if "Close" in frame.columns:
+        return frame["Close"].dropna()
+    return None
+
+
 def fetch_signals_for_universe(
     items: list[tuple[str, str]] | list[dict],
     limit: int | None = None,
@@ -175,15 +190,24 @@ def fetch_signals_for_universe(
         return cards[:limit] if limit else cards
 
     cards = []
-    failures = []
+    failures = set()
+    tickers = [ticker for ticker, _ in universe]
     try:
+        history = yf.download(
+            tickers=tickers,
+            period="6mo",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            group_by="column",
+            threads=True,
+        )
         for ticker, label in universe:
-            history = yf.Ticker(ticker).history(period="6mo", interval="1d", auto_adjust=True)
-            if "Close" not in history.columns or history.empty:
-                failures.append((ticker, label))
+            close_series = _extract_close_series(history, ticker)
+            if close_series is None or close_series.empty:
+                failures.add(ticker)
                 continue
-
-            scored = _score_series(history["Close"])
+            scored = _score_series(close_series)
             cards.append(
                 {
                     "symbol": ticker,
@@ -195,8 +219,9 @@ def fetch_signals_for_universe(
         cards = [_fallback_card(symbol, label) for symbol, label in universe]
         return cards[:limit] if limit else cards
 
-    for ticker, label in failures:
-        cards.append(_fallback_card(ticker, label))
+    for ticker, label in universe:
+        if ticker in failures:
+            cards.append(_fallback_card(ticker, label))
 
     if sort_by_score:
         cards.sort(key=lambda card: card["score"], reverse=True)
