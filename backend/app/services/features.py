@@ -1,15 +1,49 @@
 import pandas as pd
+import yfinance as yf
+from datetime import datetime, timedelta
 
 from app.config import DATA_PATH
 
+LIVE_SYMBOLS = ["SPY", "GLD", "USO", "GBPUSD=X", "VIX", "TLT", "BITO"]
+
+def fetch_live_prices() -> pd.DataFrame:
+    """Fetch recent daily prices for core universe using yfinance."""
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=90)
+    
+    # Map symbols if needed (yfinance uses different tickers for some)
+    # VIX is ^VIX, GBPUSD=X is usually fine
+    yf_symbols = [s if s != "VIX" else "^VIX" for s in LIVE_SYMBOLS]
+    
+    try:
+        data = yf.download(yf_symbols, start=start_date, end=end_date, interval="1d", progress=False)
+        if data.empty:
+            return pd.DataFrame()
+            
+        # Handle MultiIndex columns from yfinance
+        prices = data["Adj Close"] if "Adj Close" in data else data["Close"]
+        
+        # Rename ^VIX back to VIX
+        if "^VIX" in prices.columns:
+            prices = prices.rename(columns={"^VIX": "VIX"})
+            
+        return prices.ffill().dropna()
+    except Exception:
+        return pd.DataFrame()
+
 
 def load_prices() -> pd.DataFrame:
+    # Try live data first
+    live_df = fetch_live_prices()
+    if not live_df.empty and "SPY" in live_df.columns:
+        return live_df
+
     if not DATA_PATH.exists():
-        raise RuntimeError("data/prices_daily.csv not found.")
+        raise RuntimeError("data/prices_daily.csv not found and live fetch failed.")
 
     prices = pd.read_csv(DATA_PATH, index_col=0, parse_dates=True).sort_index().ffill()
     if "SPY" not in prices.columns:
-        raise RuntimeError(f"Missing SPY column. Found: {list(prices.columns)}")
+        raise RuntimeError(f"Missing SPY column in CSV. Found: {list(prices.columns)}")
     return prices
 
 
@@ -45,6 +79,14 @@ def build_feature_frame(prices: pd.DataFrame) -> pd.DataFrame:
         feats["gbp_ret_1d"] = rets["GBPUSD=X"]
         feats["gbp_mom_20d"] = aligned["GBPUSD=X"].pct_change(20)
 
+    if "TLT" in aligned.columns:
+        feats["tlt_ret_1d"] = rets["TLT"]
+        feats["tlt_mom_20d"] = aligned["TLT"].pct_change(20)
+
+    if "BITO" in aligned.columns:
+        feats["bito_ret_1d"] = rets["BITO"]
+        feats["bito_mom_20d"] = aligned["BITO"].pct_change(20)
+
     if "VIX" in aligned.columns:
         feats["vix_level"] = aligned["VIX"]
         feats["vix_chg_5d"] = aligned["VIX"].pct_change(5)
@@ -54,6 +96,8 @@ def build_feature_frame(prices: pd.DataFrame) -> pd.DataFrame:
         feats["gld_vs_spy_20d"] = aligned["GLD"].pct_change(20) - aligned["SPY"].pct_change(20)
     if {"USO", "SPY"}.issubset(aligned.columns):
         feats["uso_vs_spy_20d"] = aligned["USO"].pct_change(20) - aligned["SPY"].pct_change(20)
+    if {"TLT", "SPY"}.issubset(aligned.columns):
+        feats["tlt_vs_spy_20d"] = aligned["TLT"].pct_change(20) - aligned["SPY"].pct_change(20)
     if {"VIX", "SPY"}.issubset(aligned.columns):
         feats["vix_spy_stress"] = aligned["VIX"].pct_change(5) - aligned["SPY"].pct_change(5)
 
@@ -98,6 +142,8 @@ def compute_market_snapshot() -> list[dict]:
         "USO": "Oil",
         "GBPUSD=X": "GBP/USD",
         "VIX": "Volatility",
+        "TLT": "Treasury Bonds",
+        "BITO": "Bitcoin Strategy",
     }
     snapshot = []
 
@@ -133,6 +179,8 @@ def compute_market_panels(window: int = 20) -> list[dict]:
         "USO": "Oil",
         "GBPUSD=X": "GBP/USD",
         "VIX": "Volatility",
+        "TLT": "Treasury Bonds",
+        "BITO": "Bitcoin Strategy",
     }
     panels = []
 

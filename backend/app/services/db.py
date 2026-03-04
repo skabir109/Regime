@@ -1,3 +1,4 @@
+from sqlalchemy import inspect, text
 from sqlmodel import SQLModel, create_engine, Session
 from app.config import DATABASE_URL, DIRECT_URL
 
@@ -29,4 +30,36 @@ def init_db():
     # Use DIRECT_URL for schema creation to bypass pgbouncer issues
     engine = get_engine(use_direct=True)
     SQLModel.metadata.create_all(engine)
+    _run_lightweight_migrations(engine)
 
+
+def _run_lightweight_migrations(engine) -> None:
+    """
+    Small, idempotent startup migrations for local/dev environments.
+    Uses direct ALTER TABLE checks so existing DBs do not break when columns are added.
+    """
+    inspector = inspect(engine)
+    if not inspector.has_table("users"):
+        return
+
+    existing = {column["name"] for column in inspector.get_columns("users")}
+    statements: list[str] = []
+    dialect = engine.dialect.name
+
+    if "failed_login_attempts" not in existing:
+        statements.append(
+            "ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0"
+        )
+
+    if "locked_until" not in existing:
+        if dialect == "postgresql":
+            statements.append("ALTER TABLE users ADD COLUMN locked_until TIMESTAMPTZ NULL")
+        else:
+            statements.append("ALTER TABLE users ADD COLUMN locked_until DATETIME NULL")
+
+    if not statements:
+        return
+
+    with engine.begin() as connection:
+        for stmt in statements:
+            connection.execute(text(stmt))

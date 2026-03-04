@@ -80,8 +80,36 @@ def authenticate_user(email: str, password: str) -> dict:
     normalized_email = email.strip().lower()
     with Session(get_engine()) as session:
         user = session.exec(select(User).where(User.email == normalized_email)).first()
-        if not user or not verify_password(password, user.password_hash):
+        if not user:
             raise ValueError("Invalid credentials.")
+            
+        # Check if locked
+        if user.locked_until:
+            locked_until = user.locked_until
+            if isinstance(locked_until, str):
+                locked_until = datetime.fromisoformat(locked_until.replace("Z", "+00:00"))
+            if locked_until.tzinfo is None:
+                locked_until = locked_until.replace(tzinfo=timezone.utc)
+                
+            if locked_until > datetime.now(timezone.utc):
+                diff = locked_until - datetime.now(timezone.utc)
+                minutes = int(diff.total_seconds() / 60)
+                raise ValueError(f"Account is locked. Try again in {max(1, minutes)} minutes.")
+
+        if not verify_password(password, user.password_hash):
+            user.failed_login_attempts += 1
+            if user.failed_login_attempts >= 5:
+                user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=15)
+            session.add(user)
+            session.commit()
+            raise ValueError("Invalid credentials.")
+            
+        # Success
+        user.failed_login_attempts = 0
+        user.locked_until = None
+        session.add(user)
+        session.commit()
+        
         return {
             "id": user.id,
             "email": user.email,

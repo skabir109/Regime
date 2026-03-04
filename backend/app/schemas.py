@@ -1,8 +1,14 @@
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from sqlmodel import SQLModel, Field as SQLField, Relationship
+import re
 
+def sanitize_html(value: str) -> str:
+    """Basic HTML tag stripping for text inputs."""
+    if not value:
+        return value
+    return re.sub(r'<[^>]*?>', '', value)
 
 class User(SQLModel, table=True):
     __tablename__ = "users"
@@ -16,6 +22,8 @@ class User(SQLModel, table=True):
     verification_token: Optional[str] = None
     reset_token: Optional[str] = None
     reset_token_expires_at: Optional[datetime] = None
+    failed_login_attempts: int = SQLField(default=0)
+    locked_until: Optional[datetime] = None
 
     sessions: List["DBSession"] = Relationship(back_populates="user")
     watchlist_items: List["WatchlistItemDB"] = Relationship(back_populates="user")
@@ -289,6 +297,10 @@ class WatchlistRequest(BaseModel):
     symbol: str
     label: str | None = None
 
+    @validator("label")
+    def sanitize_label(cls, v):
+        return sanitize_html(v)
+
 
 class AlertItem(BaseModel):
     title: str
@@ -310,6 +322,10 @@ class RegisterRequest(BaseModel):
     email: str
     password: str
     name: str
+
+    @validator("name")
+    def sanitize_name(cls, v):
+        return sanitize_html(v)
 
 
 class LoginRequest(BaseModel):
@@ -524,13 +540,19 @@ class SharedWorkspace(BaseModel):
 class SharedWorkspaceRequest(BaseModel):
     name: str
 
+    @validator("name")
+    def sanitize_name(cls, v):
+        return sanitize_html(v)
 
 class SharedWorkspaceJoinRequest(BaseModel):
     invite_code: str
 
-
 class SharedWorkspaceNoteRequest(BaseModel):
     content: str
+
+    @validator("content")
+    def sanitize_content(cls, v):
+        return sanitize_html(v)
 
 
 class TerminalBootstrapResponse(BaseModel):
@@ -540,3 +562,22 @@ class TerminalBootstrapResponse(BaseModel):
     transitions: list[RegimeTransition]
     sectors: list[SectorPerformance] = []
     watchlist: list[WatchlistItem] = []
+
+
+class AIAnalyzeRequest(BaseModel):
+    mode: str = "BRIEFING"
+    query: str = ""
+    context: dict[str, object] = Field(default_factory=dict)
+    watchlist: list[str] = Field(default_factory=list)
+    kb_context: list[str] = Field(default_factory=list)
+    max_words: int = 220
+    regenerate_on_fail: bool = True
+
+
+class AIAnalyzeResponse(BaseModel):
+    mode: str
+    content: str
+    attempts: int
+    model: str
+    validator_passed: bool
+    validation_errors: list[str] = Field(default_factory=list)

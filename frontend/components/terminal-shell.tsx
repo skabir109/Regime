@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { apiFetch } from "@/lib/api";
 
 type ViewKey = "monitor" | "briefing" | "world" | "markets" | "signals" | "desk" | "news" | "system";
@@ -247,6 +247,31 @@ type BriefingHistoryItem = {
   briefing_date: string;
   headline: string;
   overview: string;
+};
+
+type AIAnalyzeResponse = {
+  mode: string;
+  content: string;
+  attempts: number;
+  model: string;
+  validator_passed: boolean;
+  validation_errors: string[];
+};
+
+type ParsedAIBriefing = {
+  headline: string;
+  whatChanged: string[];
+  marketImplications: string[];
+  watchlistImpact: string[];
+  bullCase: string[];
+  bearCase: string[];
+  riskFlags: string[];
+  nextActions: string[];
+};
+
+type ParsedAISections = {
+  order: string[];
+  sections: Record<string, string[]>;
 };
 
 type Metadata = {
@@ -528,6 +553,153 @@ function formatSettingValue(value: unknown) {
   return String(value);
 }
 
+function stripMarkdown(value: string) {
+  return value.replace(/\*\*/g, "").trim();
+}
+
+function uniqueItems(items: string[], limit: number) {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const raw of items) {
+    const item = stripMarkdown(raw).replace(/\s+/g, " ").trim();
+    const key = item.toLowerCase();
+    if (!item || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    output.push(item);
+    if (output.length >= limit) {
+      break;
+    }
+  }
+  return output;
+}
+
+function conciseFocusItem(item: string) {
+  const compact = stripMarkdown(item).replace(/\s+/g, " ").trim();
+  if (!compact.includes(";")) {
+    return compact;
+  }
+  const parts = compact.split(";").map((part) => part.trim()).filter(Boolean);
+  return parts.slice(0, 2).join("; ");
+}
+
+function parseAISections(content: string): ParsedAISections {
+  const parsed: ParsedAISections = { order: [], sections: {} };
+  let current = "";
+  const lines = (content || "").split(/\r?\n/);
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+    const isBullet = /^(?:-|[*]|\d+[.])\s+/.test(line);
+    const headerMatch = line.match(/^\*{0,2}([A-Za-z0-9\-/ ]+)\*{0,2}:\*{0,2}\s*(.*)$/);
+
+    if (!isBullet && headerMatch) {
+      const header = stripMarkdown(headerMatch[1]).trim();
+      current = header;
+      if (!parsed.sections[current]) {
+        parsed.sections[current] = [];
+        parsed.order.push(current);
+      }
+      const trailing = stripMarkdown(headerMatch[2] || "");
+      if (trailing) {
+        parsed.sections[current].push(trailing);
+      }
+      continue;
+    }
+
+    const bulletMatch = line.match(/^(?:-|[*]|\d+[.])\s+(.*)$/);
+    const value = stripMarkdown((bulletMatch ? bulletMatch[1] : line) || "");
+    if (!value || !current) {
+      continue;
+    }
+    parsed.sections[current].push(value);
+  }
+
+  return parsed;
+}
+
+function pickSectionItems(parsed: ParsedAISections | null, headers: string[], limit = 4) {
+  if (!parsed) {
+    return [];
+  }
+  const merged: string[] = [];
+  for (const name of headers) {
+    const items = parsed.sections[name] || [];
+    merged.push(...items);
+  }
+  return uniqueItems(merged, limit);
+}
+
+function parseAIBriefingContent(content: string): ParsedAIBriefing {
+  const parsed: ParsedAIBriefing = {
+    headline: "",
+    whatChanged: [],
+    marketImplications: [],
+    watchlistImpact: [],
+    bullCase: [],
+    bearCase: [],
+    riskFlags: [],
+    nextActions: [],
+  };
+
+  const sectionMap: Record<string, keyof ParsedAIBriefing> = {
+    headline: "headline",
+    "what changed": "whatChanged",
+    "market implications": "marketImplications",
+    "watchlist impact": "watchlistImpact",
+    "bull case": "bullCase",
+    "bear case": "bearCase",
+    "risk flags": "riskFlags",
+    "next actions": "nextActions",
+  };
+
+  let currentSection: keyof ParsedAIBriefing | "" = "";
+  const lines = content.split(/\r?\n/);
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+
+    const headerMatch = line.match(/^\*{0,2}([A-Za-z0-9\-/ ]+):\*{0,2}(.*)$/);
+    const isBullet = /^(?:-|[*]|\d+[.])\s+/.test(line);
+    if (!isBullet && headerMatch) {
+      const normalizedHeader = stripMarkdown(headerMatch[1]).toLowerCase();
+      const mapped = sectionMap[normalizedHeader];
+      currentSection = mapped || "";
+      const trailing = stripMarkdown(headerMatch[2] || "");
+      if (currentSection === "headline" && trailing) {
+        parsed.headline = trailing;
+      } else if (currentSection && trailing && currentSection !== "headline") {
+        (parsed[currentSection] as string[]).push(trailing);
+      }
+      continue;
+    }
+
+    const bulletMatch = line.match(/^(?:-|[*]|\d+[.])\s+(.*)$/);
+    const value = stripMarkdown((bulletMatch ? bulletMatch[1] : line) || "");
+    if (!value || !currentSection) {
+      continue;
+    }
+
+    if (currentSection === "headline") {
+      if (!parsed.headline) {
+        parsed.headline = value;
+      }
+      continue;
+    }
+
+    (parsed[currentSection] as string[]).push(value);
+  }
+
+  return parsed;
+}
+
 function Sparkline({ values }: { values: number[] }) {
   if (!values.length) {
     return null;
@@ -764,6 +936,26 @@ export default function TerminalShell() {
   const [selectedTier, setSelectedTier] = useState("");
   const [deliveryResult, setDeliveryResult] = useState<BriefingDeliveryResult | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [aiBriefing, setAiBriefing] = useState<AIAnalyzeResponse | null>(null);
+  const [aiBriefingError, setAiBriefingError] = useState("");
+  const [aiAlertDrilldown, setAiAlertDrilldown] = useState<AIAnalyzeResponse | null>(null);
+  const [aiWorldAnalysis, setAiWorldAnalysis] = useState<AIAnalyzeResponse | null>(null);
+  const [aiSignalsContext, setAiSignalsContext] = useState<AIAnalyzeResponse | null>(null);
+  const [aiLoading, setAiLoading] = useState({
+    briefing: false,
+    alert: false,
+    world: false,
+    signals: false,
+  });
+  const [selectedAlertKey, setSelectedAlertKey] = useState("");
+  const aiCacheRef = useRef<Map<string, { expiresAt: number; value: AIAnalyzeResponse }>>(new Map());
+  const aiInflightRef = useRef<Map<string, Promise<AIAnalyzeResponse>>>(new Map());
+  const aiSignatureRef = useRef({
+    briefing: "",
+    alert: "",
+    world: "",
+    signals: "",
+  });
 
   async function loadCoreData(silent = false) {
     if (!silent) {
@@ -806,6 +998,269 @@ export default function TerminalShell() {
     }
   }
 
+  async function requestAIWithCache(
+    cacheKey: string,
+    payload: Record<string, unknown>,
+    ttlMs = 45000,
+  ): Promise<AIAnalyzeResponse> {
+    const now = Date.now();
+    const cached = aiCacheRef.current.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+
+    const inflight = aiInflightRef.current.get(cacheKey);
+    if (inflight) {
+      return inflight;
+    }
+
+    const promise = apiFetch<AIAnalyzeResponse>("/ai/analyze", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    aiInflightRef.current.set(cacheKey, promise);
+
+    try {
+      const value = await promise;
+      aiCacheRef.current.set(cacheKey, { value, expiresAt: now + ttlMs });
+      return value;
+    } finally {
+      aiInflightRef.current.delete(cacheKey);
+    }
+  }
+
+  async function handleGenerateBriefingAI(force = false) {
+    if (!data) {
+      return;
+    }
+    const watchlist = (data.watchlist || []).map((item) => item.symbol.toUpperCase());
+    const signature = [
+      data.marketState.regime,
+      data.prediction.confidence.toFixed(3),
+      data.marketState.breadth,
+      data.marketState.volatility_state,
+      data.alerts?.[0]?.title || "",
+      data.worldBriefing?.headline || "",
+      watchlist.join(","),
+    ].join("|");
+    if (!force && aiSignatureRef.current.briefing === signature) {
+      return;
+    }
+    aiSignatureRef.current.briefing = signature;
+    setAiLoading((current) => ({ ...current, briefing: true }));
+    try {
+      const cacheKey = `briefing:${data.marketState.regime}:${data.prediction.confidence}:${watchlist.join(",")}`;
+      const aiResult = await requestAIWithCache(
+        cacheKey,
+        {
+          mode: "BRIEFING",
+          query: "Generate the current terminal briefing using the provided market context.",
+          context: {
+            regime: data.marketState.regime,
+            confidence: data.prediction.confidence,
+            breadth: data.marketState.breadth,
+            volatility_state: data.marketState.volatility_state,
+            trend_strength: data.marketState.trend_strength,
+            top_alert: data.alerts?.[0]
+              ? {
+                  title: data.alerts[0].title,
+                  severity: data.alerts[0].severity,
+                  message: data.alerts[0].message,
+                }
+              : null,
+            world_headline: data.worldBriefing?.headline || null,
+          },
+          watchlist,
+          max_words: 160,
+          regenerate_on_fail: false,
+        },
+        60000,
+      );
+      setAiBriefing(aiResult);
+      setAiBriefingError("");
+    } catch (caught) {
+      setAiBriefingError(caught instanceof Error ? caught.message : "Failed to load AI briefing.");
+    } finally {
+      setAiLoading((current) => ({ ...current, briefing: false }));
+    }
+  }
+
+  async function handleGenerateAlertAI(force = false) {
+    if (!data?.alerts?.length) {
+      return;
+    }
+    const selected =
+      data.alerts.find((item) => `${item.title}::${item.message}` === selectedAlertKey) ||
+      data.alerts[0];
+    if (!selected) {
+      return;
+    }
+    const watchlist = (data.watchlist || []).map((item) => item.symbol.toUpperCase());
+    const signature = [
+      selected.title,
+      selected.severity,
+      data.marketState.regime,
+      data.prediction.confidence.toFixed(3),
+      watchlist.join(","),
+    ].join("|");
+    if (!force && aiSignatureRef.current.alert === signature) {
+      return;
+    }
+    aiSignatureRef.current.alert = signature;
+    setAiLoading((current) => ({ ...current, alert: true }));
+    try {
+      const cacheKey = `alert:${selected.title}:${selected.message}:${watchlist.join(",")}`;
+      const result = await requestAIWithCache(
+        cacheKey,
+        {
+          mode: "ALERT_DRILLDOWN",
+          query: "Explain why this alert fired and what should be monitored next.",
+          context: {
+            alert: {
+              title: selected.title,
+              severity: selected.severity,
+              message: selected.message,
+              symbol: selected.symbol || null,
+            },
+            regime: data.marketState.regime,
+            confidence: data.prediction.confidence,
+            breadth: data.marketState.breadth,
+            volatility_state: data.marketState.volatility_state,
+          },
+          watchlist,
+          max_words: 160,
+          regenerate_on_fail: false,
+        },
+        60000,
+      );
+      setAiAlertDrilldown(result);
+    } catch {
+      // keep last successful output instead of clearing card
+    } finally {
+      setAiLoading((current) => ({ ...current, alert: false }));
+    }
+  }
+
+  async function handleGenerateWorldAI(force = false) {
+    if (!data) {
+      return;
+    }
+    const watchlist = (data.watchlist || []).map((item) => item.symbol.toUpperCase());
+    const signature = [
+      data.worldBriefing?.headline || "",
+      data.worldAffairs?.[0]?.title || "",
+      data.worldAffairs?.[0]?.published_at || "",
+      watchlist.join(","),
+    ].join("|");
+    if (!force && aiSignatureRef.current.world === signature) {
+      return;
+    }
+    aiSignatureRef.current.world = signature;
+    setAiLoading((current) => ({ ...current, world: true }));
+    try {
+      const cacheKey = `world:${watchlist.join(",")}:${data.worldBriefing.headline}:${data.worldAffairs[0]?.title || "-"}`;
+      const result = await requestAIWithCache(
+        cacheKey,
+        {
+          mode: "WORLD_AFFAIRS",
+          query: "Summarize the most relevant world-affairs theme impact for this session.",
+          context: {
+            world_headline: data.worldBriefing.headline,
+            world_summary: data.worldBriefing.summary,
+            lead_event: data.worldAffairs?.[0]
+              ? {
+                  title: data.worldAffairs[0].title,
+                  theme: data.worldAffairs[0].theme,
+                  region: data.worldAffairs[0].region,
+                  urgency: data.worldAffairs[0].urgency,
+                  severity: data.worldAffairs[0].severity,
+                }
+              : null,
+            regions: firstItems(data.worldRegions, 2).map((item) => ({
+              region: item.region,
+              theme_count: item.theme_count,
+              headline: item.headline,
+            })),
+          },
+          watchlist,
+          max_words: 160,
+          regenerate_on_fail: false,
+        },
+        90000,
+      );
+      setAiWorldAnalysis(result);
+    } catch {
+      // keep last successful output instead of clearing card
+    } finally {
+      setAiLoading((current) => ({ ...current, world: false }));
+    }
+  }
+
+  async function handleGenerateSignalsAI(force = false) {
+    if (!data) {
+      return;
+    }
+    const selectedSymbol =
+      selectedWatchlistSymbol ||
+      data.watchlistInsights[0]?.symbol ||
+      data.watchlist?.[0]?.symbol ||
+      "";
+    if (!selectedSymbol) {
+      return;
+    }
+    const selectedInsight = data.watchlistInsights.find((item) => item.symbol === selectedSymbol) || data.watchlistInsights[0];
+    const signature = [
+      selectedSymbol,
+      selectedInsight?.stance || "",
+      selectedInsight?.summary || "",
+      data.signals?.[0]?.symbol || "",
+      data.marketState.regime,
+    ].join("|");
+    if (!force && aiSignatureRef.current.signals === signature) {
+      return;
+    }
+    aiSignatureRef.current.signals = signature;
+    setAiLoading((current) => ({ ...current, signals: true }));
+    try {
+      const cacheKey = `signals:${selectedSymbol}:${selectedInsight?.summary || "-"}:${data.signals[0]?.symbol || "-"}`;
+      const result = await requestAIWithCache(
+        cacheKey,
+        {
+          mode: "WATCHLIST_CONTEXT",
+          query: `Provide watchlist context for ${selectedSymbol}.`,
+          context: {
+            selected_symbol: selectedSymbol,
+            selected_insight: selectedInsight
+              ? {
+                  stance: selectedInsight.stance,
+                  summary: selectedInsight.summary,
+                  catalyst_risk: selectedInsight.catalyst_risk,
+                  sector_readthrough: selectedInsight.sector_readthrough,
+                }
+              : null,
+            exposure: data.watchlistExposures.find((item) => item.symbol === selectedSymbol) || null,
+            top_catalyst: data.catalysts?.[0]
+              ? {
+                  title: data.catalysts[0].title,
+                  timing: data.catalysts[0].timing,
+                  category: data.catalysts[0].category,
+                }
+              : null,
+          },
+          watchlist: [selectedSymbol],
+          max_words: 160,
+          regenerate_on_fail: false,
+        },
+        60000,
+      );
+      setAiSignalsContext(result);
+    } catch {
+      // keep last successful output instead of clearing card
+    } finally {
+      setAiLoading((current) => ({ ...current, signals: false }));
+    }
+  }
+
   async function loadViewData(view: ViewKey, force = false) {
     if (data && !canAccessView(view, data.me.tier)) {
       return;
@@ -818,6 +1273,9 @@ export default function TerminalShell() {
       if (view === "monitor") {
         const [alerts] = await Promise.all([apiFetch<AlertItem[]>("/alerts")]);
         setData((current) => (current ? { ...current, alerts } : current));
+        if (alerts.length && !selectedAlertKey) {
+          setSelectedAlertKey(`${alerts[0].title}::${alerts[0].message}`);
+        }
       }
 
       if (view === "briefing") {
@@ -952,6 +1410,66 @@ export default function TerminalShell() {
     }
     void loadWatchlistDetail(selectedWatchlistSymbol);
   }, [activeView, selectedWatchlistSymbol, data]);
+
+  // Smart auto-generation: initial load + signature-based refresh only when context changes.
+  useEffect(() => {
+    if (activeView !== "briefing" || !data || !loadedViews.briefing) {
+      return;
+    }
+    void handleGenerateBriefingAI(false);
+  }, [
+    activeView,
+    loadedViews.briefing,
+    data?.marketState.regime,
+    data?.prediction.confidence,
+    data?.marketState.breadth,
+    data?.marketState.volatility_state,
+    data?.alerts?.[0]?.title,
+    data?.worldBriefing?.headline,
+    selectedWatchlistSymbol,
+  ]);
+
+  useEffect(() => {
+    if (activeView !== "monitor" || !data || !loadedViews.monitor || !data.alerts?.length) {
+      return;
+    }
+    void handleGenerateAlertAI(false);
+  }, [
+    activeView,
+    loadedViews.monitor,
+    data?.marketState.regime,
+    data?.prediction.confidence,
+    data?.alerts?.[0]?.title,
+    data?.alerts?.[0]?.message,
+    selectedAlertKey,
+  ]);
+
+  useEffect(() => {
+    if (activeView !== "world" || !data || !loadedViews.world) {
+      return;
+    }
+    void handleGenerateWorldAI(false);
+  }, [
+    activeView,
+    loadedViews.world,
+    data?.worldBriefing?.headline,
+    data?.worldAffairs?.[0]?.title,
+    data?.worldAffairs?.[0]?.published_at,
+  ]);
+
+  useEffect(() => {
+    if (activeView !== "signals" || !data || !loadedViews.signals) {
+      return;
+    }
+    void handleGenerateSignalsAI(false);
+  }, [
+    activeView,
+    loadedViews.signals,
+    selectedWatchlistSymbol,
+    data?.watchlistInsights?.[0]?.summary,
+    data?.signals?.[0]?.symbol,
+    data?.marketState.regime,
+  ]);
 
   useEffect(() => {
     const updateClock = () => setClock(new Date().toLocaleTimeString());
@@ -1198,6 +1716,45 @@ export default function TerminalShell() {
   const deskHydrating = bootstrapping || !loadedViews.desk;
   const newsHydrating = bootstrapping || !loadedViews.news;
   const systemHydrating = bootstrapping || !loadedViews.system;
+  const parsedAIBriefing = aiBriefing?.content ? parseAIBriefingContent(aiBriefing.content) : null;
+  const parsedAlertDrilldown = aiAlertDrilldown?.content ? parseAISections(aiAlertDrilldown.content) : null;
+  const parsedWorldAnalysis = aiWorldAnalysis?.content ? parseAISections(aiWorldAnalysis.content) : null;
+  const parsedSignalsContext = aiSignalsContext?.content ? parseAISections(aiSignalsContext.content) : null;
+  const briefingChecklist = uniqueItems(
+    parsedAIBriefing?.marketImplications.length
+      ? parsedAIBriefing.marketImplications
+      : data?.briefing.checklist || [],
+    4,
+  );
+  const briefingFocusItems = uniqueItems(
+    parsedAIBriefing?.watchlistImpact.length
+      ? parsedAIBriefing.watchlistImpact
+      : data?.briefing.focus_items || [],
+    5,
+  ).map(conciseFocusItem);
+  const briefingRisks = uniqueItems(
+    parsedAIBriefing?.riskFlags.length || parsedAIBriefing?.bearCase.length
+      ? [...(parsedAIBriefing?.riskFlags || []), ...(parsedAIBriefing?.bearCase || [])]
+      : data?.briefing.risks || [],
+    4,
+  );
+  const briefingNextActions = uniqueItems(
+    parsedAIBriefing?.nextActions.length
+      ? parsedAIBriefing.nextActions
+      : data?.briefing.catalyst_calendar || [],
+    3,
+  );
+  const briefingOverview =
+    parsedAIBriefing?.whatChanged[0] ||
+    data?.briefing.overview ||
+    aiBriefingError;
+  const alertDrivers = pickSectionItems(parsedAlertDrilldown, ["Trigger Drivers"], 4);
+  const alertConflicts = pickSectionItems(parsedAlertDrilldown, ["Conflicting Evidence", "Supporting Evidence"], 4);
+  const alertInvalidation = pickSectionItems(parsedAlertDrilldown, ["Invalidation Signals"], 3);
+  const worldWhatMatters = pickSectionItems(parsedWorldAnalysis, ["Why It Matters Now"], 3);
+  const worldFirstOrder = pickSectionItems(parsedWorldAnalysis, ["First-Order Market Effects"], 4);
+  const signalsDrivers = pickSectionItems(parsedSignalsContext, ["Key Drivers"], 4);
+  const signalsChecklist = pickSectionItems(parsedSignalsContext, ["Monitoring Checklist"], 3);
   const bullCaseItems =
     data?.marketState.bull_case?.length
       ? data.marketState.bull_case
@@ -1584,13 +2141,58 @@ export default function TerminalShell() {
                     <span className="eyebrow">Alerts</span>
                     <div className="nt-stack">
                       {firstItems(data?.alerts, 4).map((alert) => (
-                        <div className={`nt-alert ${alert.severity}`} key={`${alert.title}-${alert.message}`}>
+                        <button
+                          className={`nt-alert ${alert.severity} ${selectedAlertKey === `${alert.title}::${alert.message}` ? "is-active" : ""}`}
+                          key={`${alert.title}-${alert.message}`}
+                          onClick={() => setSelectedAlertKey(`${alert.title}::${alert.message}`)}
+                          type="button"
+                        >
                           <strong>{alert.title}</strong>
                           <p>{alert.message}</p>
-                        </div>
+                        </button>
                       ))}
                       {monitorHydrating && !data?.alerts.length ? <SkeletonList rows={3} /> : null}
                     </div>
+                  </article>
+
+              <article className="nt-panel nt-card">
+                <span className="eyebrow">AI Alert Drilldown</span>
+                <div className="nt-actions">
+                  <button
+                    className="button button-small"
+                    disabled={aiLoading.alert || !data?.alerts?.length}
+                    onClick={() => void handleGenerateAlertAI()}
+                    type="button"
+                  >
+                    {aiLoading.alert ? "Generating..." : "Generate AI Drilldown"}
+                  </button>
+                </div>
+                {monitorHydrating ? (
+                  <SkeletonList rows={3} />
+                ) : aiAlertDrilldown?.content ? (
+                  <div className="nt-stack">
+                    <div className="nt-list-item">
+                      <strong>Trigger Drivers</strong>
+                      <ul className="plain-list">
+                        {alertDrivers.length ? alertDrivers.map((item, index) => <li key={`alert-driver-${index}`}>{item}</li>) : <li>--</li>}
+                      </ul>
+                    </div>
+                    <div className="nt-list-item">
+                      <strong>Support / Conflict</strong>
+                      <ul className="plain-list">
+                        {alertConflicts.length ? alertConflicts.map((item, index) => <li key={`alert-conflict-${index}`}>{item}</li>) : <li>--</li>}
+                      </ul>
+                    </div>
+                    <div className="nt-list-item">
+                      <strong>Invalidation</strong>
+                      <ul className="plain-list">
+                        {alertInvalidation.length ? alertInvalidation.map((item, index) => <li key={`alert-invalidation-${index}`}>{item}</li>) : <li>--</li>}
+                      </ul>
+                    </div>
+                  </div>
+                ) : (
+                      <p className="muted-copy">No AI drilldown available for current alerts.</p>
+                    )}
                   </article>
 
                   <article className="nt-panel nt-card">
@@ -1639,7 +2241,17 @@ export default function TerminalShell() {
           {activeView === "briefing" ? (
             <section className="nt-view nt-briefing">
               <article className="nt-panel nt-hero">
-                <span className="eyebrow">Pre-Market Briefing</span>
+                <span className="eyebrow">AI Analyst Brief</span>
+                <div className="nt-actions">
+                  <button
+                    className="button button-small"
+                    disabled={aiLoading.briefing || briefingHydrating}
+                    onClick={() => void handleGenerateBriefingAI()}
+                    type="button"
+                  >
+                    {aiLoading.briefing ? "Generating..." : "Generate AI Brief"}
+                  </button>
+                </div>
                 <div className="nt-briefing-copy">
                   {briefingHydrating ? (
                     <>
@@ -1649,8 +2261,11 @@ export default function TerminalShell() {
                     </>
                   ) : (
                     <>
-                      <h3>{data?.briefing.headline || "--"}</h3>
-                      <p>{data?.briefing.overview || ""}</p>
+                      <h3>{aiBriefing?.content ? "Session Summary" : data?.briefing.headline || "--"}</h3>
+                      <p>{parsedAIBriefing?.headline || briefingOverview || ""}</p>
+                      {!aiBriefing?.content && aiBriefingError ? (
+                        <p className="muted-copy">AI brief unavailable. Showing baseline briefing.</p>
+                      ) : null}
                     </>
                   )}
                 </div>
@@ -1659,33 +2274,33 @@ export default function TerminalShell() {
               <article className="nt-panel nt-card">
                 <span className="eyebrow">Checklist</span>
                 <ul className="plain-list">
-                  {(data?.briefing.checklist || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                  {briefingChecklist.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
                 </ul>
-                {briefingHydrating && !data?.briefing.checklist.length ? <SkeletonList rows={4} /> : null}
+                {briefingHydrating && !briefingChecklist.length ? <SkeletonList rows={4} /> : null}
               </article>
 
               <article className="nt-panel nt-card">
                 <span className="eyebrow">Focus Items</span>
                 <ul className="plain-list">
-                  {(data?.briefing.focus_items || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                  {briefingFocusItems.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
                 </ul>
-                {briefingHydrating && !data?.briefing.focus_items.length ? <SkeletonList rows={3} /> : null}
+                {briefingHydrating && !briefingFocusItems.length ? <SkeletonList rows={3} /> : null}
               </article>
 
               <article className="nt-panel nt-card">
                 <span className="eyebrow">Risks</span>
                 <ul className="plain-list">
-                  {(data?.briefing.risks || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                  {briefingRisks.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
                 </ul>
-                {briefingHydrating && !data?.briefing.risks.length ? <SkeletonList rows={3} /> : null}
+                {briefingHydrating && !briefingRisks.length ? <SkeletonList rows={3} /> : null}
               </article>
 
               <article className="nt-panel nt-card">
                 <span className="eyebrow">Session Catalysts</span>
                 <ul className="plain-list">
-                  {(data?.briefing.catalyst_calendar || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                  {briefingNextActions.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
                 </ul>
-                {briefingHydrating && !data?.briefing.catalyst_calendar.length ? <SkeletonList rows={3} /> : null}
+                {briefingHydrating && !briefingNextActions.length ? <SkeletonList rows={3} /> : null}
               </article>
 
               <article className="nt-panel nt-card">
@@ -1748,6 +2363,40 @@ export default function TerminalShell() {
                   {(data?.worldBriefing.key_themes || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
                 </ul>
                 {worldHydrating && !data?.worldBriefing.key_themes.length ? <SkeletonList rows={3} /> : null}
+              </article>
+
+              <article className="nt-panel nt-card">
+                <span className="eyebrow">AI Theme Summary</span>
+                <div className="nt-actions">
+                  <button
+                    className="button button-small"
+                    disabled={aiLoading.world || worldHydrating}
+                    onClick={() => void handleGenerateWorldAI()}
+                    type="button"
+                  >
+                    {aiLoading.world ? "Generating..." : "Generate AI Summary"}
+                  </button>
+                </div>
+                {worldHydrating ? (
+                  <SkeletonList rows={3} />
+                ) : aiWorldAnalysis?.content ? (
+                  <div className="nt-stack">
+                    <div className="nt-list-item">
+                      <strong>Why It Matters</strong>
+                      <ul className="plain-list">
+                        {worldWhatMatters.length ? worldWhatMatters.map((item, index) => <li key={`world-why-${index}`}>{item}</li>) : <li>--</li>}
+                      </ul>
+                    </div>
+                    <div className="nt-list-item">
+                      <strong>First-Order Effects</strong>
+                      <ul className="plain-list">
+                        {worldFirstOrder.length ? worldFirstOrder.map((item, index) => <li key={`world-first-${index}`}>{item}</li>) : <li>--</li>}
+                      </ul>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="muted-copy">AI theme summary unavailable.</p>
+                )}
               </article>
 
               <article className="nt-panel nt-card">
@@ -1946,6 +2595,40 @@ export default function TerminalShell() {
                   ))}
                   {signalsHydrating && !data?.watchlistInsights.length ? <SkeletonList rows={4} /> : null}
                 </div>
+              </article>
+
+              <article className="nt-panel nt-card">
+                <span className="eyebrow">AI Watchlist Context</span>
+                <div className="nt-actions">
+                  <button
+                    className="button button-small"
+                    disabled={aiLoading.signals || signalsHydrating}
+                    onClick={() => void handleGenerateSignalsAI()}
+                    type="button"
+                  >
+                    {aiLoading.signals ? "Generating..." : "Generate AI Context"}
+                  </button>
+                </div>
+                {signalsHydrating ? (
+                  <SkeletonList rows={3} />
+                ) : aiSignalsContext?.content ? (
+                  <div className="nt-stack">
+                    <div className="nt-list-item">
+                      <strong>Key Drivers</strong>
+                      <ul className="plain-list">
+                        {signalsDrivers.length ? signalsDrivers.map((item, index) => <li key={`signals-driver-${index}`}>{item}</li>) : <li>--</li>}
+                      </ul>
+                    </div>
+                    <div className="nt-list-item">
+                      <strong>Monitoring Checklist</strong>
+                      <ul className="plain-list">
+                        {signalsChecklist.length ? signalsChecklist.map((item, index) => <li key={`signals-check-${index}`}>{item}</li>) : <li>--</li>}
+                      </ul>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="muted-copy">AI watchlist context unavailable.</p>
+                )}
               </article>
 
               <article className="nt-panel nt-card">

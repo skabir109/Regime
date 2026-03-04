@@ -6,6 +6,47 @@ from app.services.watchlist import load_watchlist
 from app.services.world_affairs import build_world_affairs_monitor
 
 
+def build_alert_context(
+    alert: dict,
+    prediction,
+    market_state,
+    watchlist: list[dict],
+    news: list[dict],
+) -> dict:
+    return {
+        "alert": {
+            "title": alert.get("title"),
+            "severity": alert.get("severity"),
+            "message": alert.get("message"),
+            "symbol": alert.get("symbol"),
+            "details": alert.get("details", []),
+        },
+        "prediction": {
+            "regime": getattr(prediction, "regime", None),
+            "confidence": getattr(prediction, "confidence", None),
+            "probabilities": getattr(prediction, "probabilities", {}),
+        },
+        "market_state": {
+            "regime": getattr(market_state, "regime", None),
+            "breadth": getattr(market_state, "breadth", None),
+            "volatility_state": getattr(market_state, "volatility_state", None),
+            "trend_strength": getattr(market_state, "trend_strength", None),
+            "cross_asset_confirmation": getattr(market_state, "cross_asset_confirmation", None),
+            "supporting_signals": getattr(market_state, "supporting_signals", []),
+            "conflicting_signals": getattr(market_state, "conflicting_signals", []),
+        },
+        "watchlist": [item.get("symbol", "").upper() for item in watchlist if item.get("symbol")],
+        "headlines": [
+            {
+                "title": item.get("title"),
+                "source": item.get("source"),
+                "tags": item.get("tags", []),
+            }
+            for item in (news or [])[:5]
+        ],
+    }
+
+
 def build_alerts_for_watchlist(model, meta: dict, watchlist: list[dict]) -> list[dict]:
     alerts = []
     prediction = predict_latest(model, meta)

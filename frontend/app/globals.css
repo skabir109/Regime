@@ -1385,6 +1385,18 @@ select {
   gap: 12px;
 }
 
+.nt-ai-content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.55;
+  color: var(--text);
+  font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 12px;
+}
+
 .nt-probability {
   display: grid;
   gap: 8px;
@@ -1415,6 +1427,19 @@ select {
 .nt-news-item,
 .nt-ghost-button {
   text-decoration: none;
+}
+
+button.nt-alert {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.nt-alert.is-active {
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 1px rgba(77, 226, 255, 0.24) inset;
 }
 
 .nt-signal-card,

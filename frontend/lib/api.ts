@@ -39,16 +39,17 @@ export async function apiFetch<T>(path: string, init?: ApiFetchInit): Promise<T>
   }).then(async (response) => {
     if (!response.ok) {
       let message = `Request failed: ${response.status}`;
-
-      try {
-        const payload = (await response.json()) as { detail?: string };
-        if (payload?.detail) {
-          message = payload.detail;
-        }
-      } catch {
-        const text = await response.text();
-        if (text) {
-          message = text;
+      const raw = await response.text();
+      if (raw) {
+        try {
+          const payload = JSON.parse(raw) as { detail?: string };
+          if (payload?.detail) {
+            message = payload.detail;
+          } else {
+            message = raw;
+          }
+        } catch {
+          message = raw;
         }
       }
 

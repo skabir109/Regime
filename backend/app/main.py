@@ -21,6 +21,8 @@ from app.config import (
     STATIC_DIR,
 )
 from app.schemas import (
+    AIAnalyzeRequest,
+    AIAnalyzeResponse,
     AlertItem,
     BriefingDeliveryResult,
     BriefingHistoryItem,
@@ -70,7 +72,7 @@ from app.schemas import (
 )
 from app.services.alerts import build_alerts
 from sqlmodel import Session, select, SQLModel
-from app.services.db import get_engine
+from app.services.db import get_engine, init_db
 from app.services.auth import (
     authenticate_supabase_access_token,
     authenticate_user,
@@ -118,6 +120,7 @@ from app.services.world_affairs import (
     build_world_affairs_regions,
     build_narrative_timeline,
 )
+from app.services.llm import generate_analysis
 
 
 app = FastAPI(
@@ -126,9 +129,19 @@ app = FastAPI(
     description=APP_DESCRIPTION,
 )
 
-limiter = Limiter(key_func=get_remote_address)
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+@app.middleware("http")
+async def limit_request_size(request: Request, call_next):
+    # Limit request body to 1MB
+    if request.method in ("POST", "PUT", "PATCH"):
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > 1 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Request entity too large")
+    
+    return await call_next(request)
 
 app.add_middleware(
     CORSMiddleware,
@@ -137,8 +150,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'"
+    return response
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-SQLModel.metadata.create_all(get_engine(use_direct=True))
+init_db()
 
 MODEL, META = load_artifacts()
 _CACHE: dict[str, tuple[float, object]] = {}
@@ -809,5 +833,30 @@ def predict(request: PredictRequest, current_user: dict = Depends(current_user_o
 def predict_latest_endpoint(current_user: dict = Depends(current_user_or_401)):
     try:
         return _cached_prediction_latest()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/ai/analyze", response_model=AIAnalyzeResponse, tags=["ai"])
+@limiter.limit("20/minute")
+def ai_analyze(
+    request: Request,
+    payload: AIAnalyzeRequest,
+    current_user: dict = Depends(current_user_or_401),
+):
+    try:
+        response = generate_analysis(payload)
+        log_audit_event(
+            "ai_analyze",
+            current_user["id"],
+            {
+                "mode": response.mode,
+                "attempts": response.attempts,
+                "validator_passed": response.validator_passed,
+                "validation_error_count": len(response.validation_errors),
+                "ip": request.client.host if request.client else None,
+            },
+        )
+        return response
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
