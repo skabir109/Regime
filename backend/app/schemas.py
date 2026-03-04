@@ -70,6 +70,7 @@ class DeliveryPreferencesDB(SQLModel, table=True):
     webhook_enabled: bool = SQLField(default=False)
     webhook_url: Optional[str] = None
     cadence: str = SQLField(default="premarket")
+    timezone: str = SQLField(default="local")
     updated_at: datetime = SQLField(default_factory=datetime.utcnow)
 
     user: User = Relationship(back_populates="delivery_preferences")
@@ -368,6 +369,20 @@ class MarketLeader(BaseModel):
     value: float
 
 
+class PlaybookAssetAllocation(BaseModel):
+    asset: str
+    weight: str
+    target: str
+
+
+class Playbook(BaseModel):
+    title: str
+    posture: str
+    actions: list[str]
+    asset_allocation: list[PlaybookAssetAllocation]
+    tactical_watch: str
+
+
 class MarketStateSummary(BaseModel):
     regime: str
     confidence: float
@@ -376,6 +391,7 @@ class MarketStateSummary(BaseModel):
     trend_strength: str
     cross_asset_confirmation: str
     summary: str
+    playbook: Playbook | None = None
     drivers: list[RegimeDriver] = []
     warnings: list[str] = []
     leaders: list[MarketLeader] = []
@@ -468,6 +484,7 @@ class DeliveryPreferences(BaseModel):
     webhook_enabled: bool
     webhook_url: str
     cadence: str
+    timezone: str
 
 
 class DeliveryPreferencesRequest(BaseModel):
@@ -475,6 +492,7 @@ class DeliveryPreferencesRequest(BaseModel):
     webhook_enabled: bool
     webhook_url: str | None = None
     cadence: str
+    timezone: str | None = None
 
 
 class BriefingDeliveryResult(BaseModel):

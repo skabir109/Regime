@@ -10,6 +10,7 @@ DEFAULT_PREFERENCES = {
     "webhook_enabled": False,
     "webhook_url": "",
     "cadence": "premarket",
+    "timezone": "local",
 }
 
 
@@ -23,6 +24,7 @@ def get_delivery_preferences(user_id: int) -> dict:
             "webhook_enabled": prefs.webhook_enabled,
             "webhook_url": prefs.webhook_url or "",
             "cadence": prefs.cadence,
+            "timezone": prefs.timezone or "local",
         }
 
 
@@ -32,8 +34,10 @@ def save_delivery_preferences(
     webhook_enabled: bool,
     webhook_url: str | None,
     cadence: str,
+    timezone_name: str | None,
 ) -> dict:
     cleaned_url = (webhook_url or "").strip()
+    cleaned_timezone = (timezone_name or "local").strip() or "local"
     with Session(get_engine()) as session:
         user = session.get(User, user_id)
         if not user:
@@ -50,6 +54,7 @@ def save_delivery_preferences(
             prefs.webhook_enabled = webhook_enabled
             prefs.webhook_url = cleaned_url
             prefs.cadence = cadence
+            prefs.timezone = cleaned_timezone
             prefs.updated_at = datetime.now(timezone.utc)
             session.add(prefs)
         else:
@@ -59,6 +64,7 @@ def save_delivery_preferences(
                 webhook_enabled=webhook_enabled,
                 webhook_url=cleaned_url,
                 cadence=cadence,
+                timezone=cleaned_timezone,
                 updated_at=datetime.now(timezone.utc)
             )
             session.add(prefs)

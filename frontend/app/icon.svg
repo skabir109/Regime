@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Regime logo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f1e34"/>
+      <stop offset="100%" stop-color="#1e4f7a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#3bd1ff"/>
+      <stop offset="100%" stop-color="#9be8ff"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="20" fill="url(#bg)"/>
+  <path d="M36 36h28c12 0 20 7 20 18 0 8-4 13-12 16l14 22H72L60 73H50v19H36V36zm14 12v14h13c5 0 8-3 8-7s-3-7-8-7H50z" fill="url(#accent)"/>
+  <circle cx="94" cy="36" r="6" fill="#3bd1ff"/>
+</svg>

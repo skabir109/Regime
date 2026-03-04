@@ -287,6 +287,7 @@ type DeliveryPreferences = {
   webhook_enabled: boolean;
   webhook_url: string;
   cadence: string;
+  timezone: string;
 };
 
 type BriefingDeliveryResult = {
@@ -436,6 +437,16 @@ const cadenceOptions = [
   { value: "eod", label: "End Of Day" },
 ];
 
+const timezoneOptions = [
+  { value: "local", label: "Local (Browser)" },
+  { value: "America/Toronto", label: "America/Toronto (ET)" },
+  { value: "America/New_York", label: "America/New_York (ET)" },
+  { value: "America/Chicago", label: "America/Chicago (CT)" },
+  { value: "America/Denver", label: "America/Denver (MT)" },
+  { value: "America/Los_Angeles", label: "America/Los_Angeles (PT)" },
+  { value: "UTC", label: "UTC" },
+];
+
 const regimeGuide: Record<string, { meaning: string; use: string; avoid: string }> = {
   RiskOn: {
     meaning:
@@ -477,15 +488,45 @@ function formatPrice(value?: number | null) {
   return `$${value.toFixed(2)}`;
 }
 
-function formatDateTime(value?: string | null) {
+function toDate(value: string): Date | null {
+  const raw = value.trim();
+  if (!raw) {
+    return null;
+  }
+
+  // If timestamp has no timezone, treat it as UTC for consistent cross-feed handling.
+  const looksIsoNoTz = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(raw);
+  const looksSpaceNoTz = /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/.test(raw);
+  const normalized = looksIsoNoTz
+    ? `${raw}Z`
+    : looksSpaceNoTz
+      ? `${raw.replace(" ", "T")}Z`
+      : raw;
+
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed;
+}
+
+function formatDateTime(value?: string | null, timezoneName: string = "local") {
   if (!value) {
     return "--";
   }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
+  const date = toDate(value);
+  if (!date) {
     return value;
   }
-  return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+  try {
+    const options =
+      timezoneName && timezoneName !== "local"
+        ? ({ timeZone: timezoneName } as Intl.DateTimeFormatOptions)
+        : undefined;
+    return `${date.toLocaleDateString(undefined, options)} ${date.toLocaleTimeString(undefined, options)}`;
+  } catch {
+    return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+  }
 }
 
 function toneClass(value?: string | null) {
@@ -514,6 +555,10 @@ function metricClass(value?: number | null) {
 
 function firstItems<T>(items: T[] | undefined, limit: number) {
   return (items || []).slice(0, limit);
+}
+
+function newsKey(title: string, url: string) {
+  return `${url || ""}::${(title || "").trim().toLowerCase()}`;
 }
 
 function labelizeKey(value: string) {
@@ -879,6 +924,7 @@ function emptyDelivery(): DeliveryPreferences {
     webhook_enabled: false,
     webhook_url: "",
     cadence: "premarket",
+    timezone: "local",
   };
 }
 
@@ -932,6 +978,7 @@ export default function TerminalShell() {
     webhook_enabled: false,
     webhook_url: "",
     cadence: "premarket",
+    timezone: "local",
   });
   const [selectedTier, setSelectedTier] = useState("");
   const [deliveryResult, setDeliveryResult] = useState<BriefingDeliveryResult | null>(null);
@@ -1755,6 +1802,25 @@ export default function TerminalShell() {
   const worldFirstOrder = pickSectionItems(parsedWorldAnalysis, ["First-Order Market Effects"], 4);
   const signalsDrivers = pickSectionItems(parsedSignalsContext, ["Key Drivers"], 4);
   const signalsChecklist = pickSectionItems(parsedSignalsContext, ["Monitoring Checklist"], 3);
+  const currentTimezone = deliveryForm.timezone || data?.delivery?.timezone || "local";
+  const watchlistNewsMap = new Map<string, string[]>();
+  for (const item of data?.watchlistNews || []) {
+    watchlistNewsMap.set(newsKey(item.title, item.url), item.matched_symbols || []);
+  }
+  const prioritizedNews = (data?.news || [])
+    .map((item) => {
+      const matchedSymbols = watchlistNewsMap.get(newsKey(item.title, item.url)) || [];
+      return { item, matchedSymbols };
+    })
+    .sort((a, b) => {
+      if (a.matchedSymbols.length && !b.matchedSymbols.length) {
+        return -1;
+      }
+      if (!a.matchedSymbols.length && b.matchedSymbols.length) {
+        return 1;
+      }
+      return 0;
+    });
   const bullCaseItems =
     data?.marketState.bull_case?.length
       ? data.marketState.bull_case
@@ -1870,7 +1936,7 @@ export default function TerminalShell() {
               <div className="nt-status-line">
                 <span className="nt-signal"><i /> Live model</span>
                 <span className="nt-status-chip">
-                  {data ? `Sync ${formatDateTime(data.prediction.timestamp)}` : <SkeletonBlock width="112px" height="12px" />}
+                  {data ? `Sync ${formatDateTime(data.prediction.timestamp, currentTimezone)}` : <SkeletonBlock width="112px" height="12px" />}
                 </span>
               </div>
               <div className="nt-clock-row">
@@ -2436,7 +2502,7 @@ export default function TerminalShell() {
                   {(data?.worldTimeline || []).map((item) => (
                     <div className="nt-list-item" key={`${item.title}-${item.published_at}`}>
                       <strong>{item.title}</strong>
-                      <span>{item.theme} • {item.region} • {formatDateTime(item.published_at)}</span>
+                      <span>{item.theme} • {item.region} • {formatDateTime(item.published_at, currentTimezone)}</span>
                       <p><strong>Event:</strong> {item.event_summary}</p>
                       <p><strong>Market Reaction:</strong> {item.market_reaction}</p>
                       <p><strong>Follow-Through:</strong> {item.follow_through}</p>
@@ -2453,7 +2519,7 @@ export default function TerminalShell() {
                   <div className="nt-stack">
                     <a className="nt-news-item" href={event.url} rel="noreferrer" target="_blank">
                       <strong>{event.title}</strong>
-                      <span>{event.source} • {formatDateTime(event.published_at)} • {event.urgency} / {event.severity}</span>
+                      <span>{event.source} • {formatDateTime(event.published_at, currentTimezone)} • {event.urgency} / {event.severity}</span>
                       <p>{event.summary || event.why_it_matters}</p>
                     </a>
                     <div className="nt-copy">
@@ -2854,7 +2920,7 @@ export default function TerminalShell() {
                   {firstItems(data?.workspace?.notes, 5).map((note) => (
                     <div className="nt-list-item" key={note.id}>
                       <strong>{note.author_name}</strong>
-                      <span>{formatDateTime(note.created_at)}</span>
+                      <span>{formatDateTime(note.created_at, currentTimezone)}</span>
                       <p>{note.content}</p>
                     </div>
                   ))}
@@ -2867,7 +2933,7 @@ export default function TerminalShell() {
                   {firstItems(data?.workspace?.briefing_snapshots, 5).map((item) => (
                     <div className="nt-list-item" key={item.id}>
                       <strong>{item.headline}</strong>
-                      <span>{item.author_name} • {formatDateTime(item.created_at)}</span>
+                      <span>{item.author_name} • {formatDateTime(item.created_at, currentTimezone)}</span>
                       <p>{item.overview}</p>
                     </div>
                   ))}
@@ -2879,12 +2945,15 @@ export default function TerminalShell() {
           {activeView === "news" ? (
             <section className="nt-view nt-news">
               <article className="nt-panel nt-card nt-news-primary">
-                <span className="eyebrow">Market News</span>
+                <span className="eyebrow">Watchlist + Market News</span>
                 <div className="nt-stack">
-                  {firstItems(data?.news, 8).map((item) => (
+                  {firstItems(prioritizedNews, 8).map(({ item, matchedSymbols }) => (
                     <a className="nt-news-item" href={item.url} key={`${item.title}-${item.url}`} rel="noreferrer" target="_blank">
                       <strong>{item.title}</strong>
-                      <span>{item.source} • {formatDateTime(item.published_at)}</span>
+                      <span>
+                        {item.source} • {formatDateTime(item.published_at, currentTimezone)}
+                        {matchedSymbols.length ? ` • Matched: ${matchedSymbols.join(", ")}` : ""}
+                      </span>
                       <p>{item.summary || item.tags.join(" • ")}</p>
                     </a>
                   ))}
@@ -2892,12 +2961,12 @@ export default function TerminalShell() {
               </article>
 
               <article className="nt-panel nt-card">
-                <span className="eyebrow">Watchlist-Matched News</span>
+                <span className="eyebrow">All Market News</span>
                 <div className="nt-stack">
-                  {firstItems(data?.watchlistNews, 6).map((item) => (
-                    <a className="nt-news-item" href={item.url} key={`${item.title}-${item.url}-watchlist`} rel="noreferrer" target="_blank">
+                  {firstItems(data?.news, 8).map((item) => (
+                    <a className="nt-news-item" href={item.url} key={`${item.title}-${item.url}-all`} rel="noreferrer" target="_blank">
                       <strong>{item.title}</strong>
-                      <span>{item.matched_symbols.join(", ")} • {item.source}</span>
+                      <span>{item.source} • {formatDateTime(item.published_at, currentTimezone)}</span>
                     </a>
                   ))}
                 </div>
@@ -2925,6 +2994,10 @@ export default function TerminalShell() {
                   <div>
                     <span>Briefing Cadence</span>
                     <strong>{labelizeKey(deliveryForm.cadence || "premarket")}</strong>
+                  </div>
+                  <div>
+                    <span>Timezone</span>
+                    <strong>{deliveryForm.timezone === "local" ? "Local (Browser)" : deliveryForm.timezone}</strong>
                   </div>
                 </div>
                 <div className="nt-plan-current">
@@ -2990,6 +3063,20 @@ export default function TerminalShell() {
                           value={deliveryForm.cadence}
                         >
                           {cadenceOptions.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="nt-settings-inline-field">
+                        <span className="eyebrow">Timezone</span>
+                        <select
+                          className="nt-input nt-settings-select"
+                          onChange={(event) => setDeliveryForm((current) => ({ ...current, timezone: event.target.value }))}
+                          value={deliveryForm.timezone}
+                        >
+                          {timezoneOptions.map((option) => (
                             <option key={option.value} value={option.value}>
                               {option.label}
                             </option>

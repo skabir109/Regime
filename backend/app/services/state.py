@@ -3,6 +3,7 @@ import numpy as np
 from app.services.features import build_feature_frame, compute_market_panels, compute_market_snapshot, load_prices
 from app.services.inference import predict_latest
 from app.services.news import fetch_market_news
+from app.services.playbook import get_playbook_for_regime
 from app.services.sectors import fetch_sector_breadth
 
 
@@ -236,6 +237,7 @@ def build_market_state_summary(model, meta: dict) -> dict:
         "trend_strength": trend_strength,
         "cross_asset_confirmation": cross_asset_confirmation,
         "summary": summary,
+        "playbook": get_playbook_for_regime(prediction.regime),
         "drivers": drivers,
         "warnings": warnings,
         "leaders": [

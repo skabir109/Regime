@@ -57,9 +57,25 @@ def _run_lightweight_migrations(engine) -> None:
         else:
             statements.append("ALTER TABLE users ADD COLUMN locked_until DATETIME NULL")
 
-    if not statements:
+    if statements:
+        with engine.begin() as connection:
+            for stmt in statements:
+                connection.execute(text(stmt))
+
+    # delivery_preferences table migrations
+    if not inspector.has_table("delivery_preferences"):
+        return
+
+    delivery_existing = {column["name"] for column in inspector.get_columns("delivery_preferences")}
+    delivery_statements: list[str] = []
+    if "timezone" not in delivery_existing:
+        delivery_statements.append(
+            "ALTER TABLE delivery_preferences ADD COLUMN timezone VARCHAR(64) NOT NULL DEFAULT 'local'"
+        )
+
+    if not delivery_statements:
         return
 
     with engine.begin() as connection:
-        for stmt in statements:
+        for stmt in delivery_statements:
             connection.execute(text(stmt))

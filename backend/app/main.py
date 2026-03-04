@@ -771,6 +771,7 @@ def settings_delivery_update(
             payload.webhook_enabled,
             payload.webhook_url,
             payload.cadence,
+            payload.timezone,
         )
         _invalidate_user_terminal_cache(current_user["id"])
         return result

@@ -35,13 +35,13 @@ SESSION_SAMESITE = os.getenv("REGIME_SESSION_SAMESITE", "lax")
 
 ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "")
 CALENDAR_PROVIDER = os.getenv("REGIME_CALENDAR_PROVIDER", "auto").lower()
+
 SUPABASE_URL = os.getenv("SUPABASE_URL", os.getenv("NEXT_PUBLIC_SUPABASE_URL", "")).rstrip("/")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY", ""))
 
 LLM_API_KEY = os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY", "")).strip()
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-LLM_CHAT_COMPLETIONS_URL = os.getenv("LLM_CHAT_COMPLETIONS_URL", "").strip()
-LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-mini")
+LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.1-8b-instruct")
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "20"))
 AI_ANALYZE_CACHE_TTL_SECONDS = int(os.getenv("AI_ANALYZE_CACHE_TTL_SECONDS", "180"))
 AI_ANALYZE_CACHE_MAX_ENTRIES = int(os.getenv("AI_ANALYZE_CACHE_MAX_ENTRIES", "512"))
