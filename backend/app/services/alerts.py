@@ -1,0 +1,109 @@
+from app.services.features import compute_market_panels
+from app.services.inference import predict_latest
+from app.services.news import fetch_market_news
+from app.services.signals import fetch_signals_for_universe, fetch_trending_signals
+from app.services.watchlist import load_watchlist
+from app.services.world_affairs import build_world_affairs_monitor
+
+
+def build_alerts_for_watchlist(model, meta: dict, watchlist: list[dict]) -> list[dict]:
+    alerts = []
+    prediction = predict_latest(model, meta)
+    watch_symbols = {item["symbol"] for item in watchlist}
+    signals = (
+        fetch_signals_for_universe(watchlist, limit=8)
+        if watchlist
+        else fetch_trending_signals(limit=8)
+    )
+    panels = compute_market_panels()
+    news = fetch_market_news(limit=4)
+    world_events = build_world_affairs_monitor(limit=3)
+
+    if prediction.regime == "HighVol":
+        alerts.append(
+            {
+                "title": "Volatility Regime Active",
+                "severity": "high",
+                "message": "The model is flagging unstable market conditions. Risk should be sized more carefully.",
+                "symbol": "VIX",
+                "details": [
+                    f"Model confidence: {prediction.confidence * 100:.1f}%",
+                    "Volatility is high enough to distort standard trend signals.",
+                    "Expect wider ranges and faster rotations.",
+                ],
+            }
+        )
+    elif prediction.regime == "RiskOff":
+        alerts.append(
+            {
+                "title": "Defensive Regime",
+                "severity": "medium",
+                "message": "Top-down market conditions are risk-off. Treat long signals more selectively.",
+                "symbol": None,
+                "details": [
+                    f"Model confidence: {prediction.confidence * 100:.1f}%",
+                    "Defensive assets are leading while cyclicals are lagging.",
+                    "Consider reducing exposure or tightening stop-losses.",
+                ],
+            }
+        )
+
+    for signal in signals:
+        tracked = signal["symbol"] in watch_symbols or not watch_symbols
+        if tracked and signal["stance"] in {"Bullish", "Bearish"}:
+            alerts.append(
+                {
+                    "title": f'{signal["symbol"]} {signal["stance"]} Signal',
+                    "severity": "medium" if signal["stance"] == "Bullish" else "high",
+                    "message": signal["reasons"][0],
+                    "symbol": signal["symbol"],
+                    "details": signal["reasons"],
+                }
+            )
+
+    vix_panel = next((panel for panel in panels if panel["symbol"] == "VIX"), None)
+    if vix_panel and vix_panel["signal"] == "Stress":
+        alerts.append(
+            {
+                "title": "VIX Stress Trigger",
+                "severity": "high",
+                "message": "Volatility panel is in stress mode, which can invalidate slower setups.",
+                "symbol": "VIX",
+                "details": [
+                    f"VIX Price: {vix_panel['price']:.2f}",
+                    f"1D Change: {vix_panel['change_1d'] * 100:.2f}%",
+                    "Stress signal indicates rapid risk repricing.",
+                ],
+            }
+        )
+
+    if news:
+        alerts.append(
+            {
+                "title": "Headline Catalyst Check",
+                "severity": "low",
+                "message": news[0]["title"],
+                "symbol": None,
+                "details": [
+                    f"Source: {news[0]['source']}",
+                    f"Tags: {', '.join(news[0]['tags'])}",
+                ],
+            }
+        )
+
+    if world_events:
+        lead_event = world_events[0]
+        alerts.append(
+            {
+                "title": f'{lead_event["theme"]} Monitor',
+                "severity": "high" if lead_event["severity"] == "high" else "medium",
+                "message": f'{lead_event["why_it_matters"]} Watch: {", ".join(lead_event["affected_assets"][:3])}.',
+                "symbol": None,
+            }
+        )
+
+    return alerts[:6]
+
+
+def build_alerts(model, meta: dict, user_id: int) -> list[dict]:
+    return build_alerts_for_watchlist(model, meta, load_watchlist(user_id))

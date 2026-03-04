@@ -1,0 +1,25 @@
+name: regime
+services:
+  - name: regime-api
+    github:
+      repo: your-repo/regime
+      branch: main
+      deploy_on_push: true
+    source_dir: backend
+    http_port: 8000
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    envs:
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${db.DATABASE_URL}
+      - key: DIRECT_URL
+        scope: RUN_TIME
+        value: ${db.DATABASE_URL}
+    run_command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+databases:
+  - engine: PG
+    name: db
+    num_nodes: 1
+    size_slug: db-s-dev-7b
+    version: "15"

@@ -1,0 +1,85 @@
+{
+  "classes": [
+    "RiskOff",
+    "RiskOn",
+    "HighVol"
+  ],
+  "features": [
+    "spy_ret_1d",
+    "spy_mom_5d",
+    "spy_mom_20d",
+    "spy_mom_60d",
+    "spy_vol_10d",
+    "spy_vol_20d",
+    "spy_trend_gap_20d",
+    "spy_trend_gap_50d",
+    "spy_drawdown_20d",
+    "spy_drawdown_60d",
+    "gld_ret_1d",
+    "gld_mom_20d",
+    "uso_ret_1d",
+    "uso_mom_20d",
+    "gbp_ret_1d",
+    "gbp_mom_20d",
+    "vix_level",
+    "vix_chg_5d",
+    "vix_gap_20d",
+    "gld_vs_spy_20d",
+    "uso_vs_spy_20d",
+    "vix_spy_stress"
+  ],
+  "thresholds": {
+    "VIX_HIGH": 25.0,
+    "VIX_ELEVATED": 20.0,
+    "SPY_VOL_HIGH": 0.02,
+    "SPY_VOL_EXTREME": 0.025
+  },
+  "training": {
+    "rows": 2847,
+    "train_rows": 2277,
+    "test_rows": 570,
+    "date_range": {
+      "start": "2015-03-27",
+      "end": "2026-02-27"
+    },
+    "class_distribution": {
+      "RiskOff": 699,
+      "RiskOn": 1343,
+      "HighVol": 805
+    },
+    "class_weights": {
+      "RiskOff": 1.3269,
+      "RiskOn": 0.7369,
+      "HighVol": 1.1244
+    },
+    "metrics": {
+      "accuracy": 0.9439,
+      "macro_f1": 0.9351,
+      "weighted_f1": 0.9435
+    }
+  },
+  "feature_importance": {
+    "spy_drawdown_20d": 0.1639,
+    "vix_chg_5d": 0.1482,
+    "spy_drawdown_60d": 0.1362,
+    "vix_level": 0.1096,
+    "vix_spy_stress": 0.0959,
+    "spy_trend_gap_50d": 0.0484,
+    "spy_vol_20d": 0.0353,
+    "uso_mom_20d": 0.0341,
+    "spy_vol_10d": 0.0316,
+    "uso_vs_spy_20d": 0.0285,
+    "vix_gap_20d": 0.0274,
+    "gld_vs_spy_20d": 0.0246,
+    "spy_mom_5d": 0.0232,
+    "spy_mom_20d": 0.0205,
+    "gbp_mom_20d": 0.0182,
+    "gld_mom_20d": 0.0144,
+    "spy_trend_gap_20d": 0.0139,
+    "spy_mom_60d": 0.0133,
+    "gld_ret_1d": 0.0039,
+    "uso_ret_1d": 0.0035,
+    "spy_ret_1d": 0.0029,
+    "gbp_ret_1d": 0.0025
+  }
+}

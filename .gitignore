@@ -1,2 +1,14 @@
 __pycache__/
 *.py[cod]
+*.md
+!README.md
+!FEATURES.md
+backend/data/*.db
+backend/data/watchlist.json
+frontend/node_modules/
+frontend/.next/
+frontend/.vercel/
+frontend/.env.local
+prd.md
+.env
+SWEEP_NOTES_PRIVATE.md

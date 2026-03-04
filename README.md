@@ -1,53 +1,102 @@
-# Regime
+# Regime Monorepo
 
-Regime is a market regime detection MVP built for the DigitalOcean AI Hackathon. It classifies the current market environment into `RiskOn`, `RiskOff`, or `HighVol` using multi-asset financial features and exposes the result through a FastAPI service.
+Regime is an AI-native market intelligence product with a separated frontend and backend architecture.
 
-## MVP Scope
-
-- Train a baseline regime classifier from historical market data
-- Compute the latest feature set from stored daily prices
-- Serve live inference through a simple API
-- Package the service for local development and cloud deployment
-
-## Project Structure
+## Repository Layout
 
 ```text
-app/
-  main.py
-  config.py
-  schemas.py
-  services/
-api/
-  main.py
-data/
-model/
-training/
+backend/
+  app/
+  api/
+  data/
+  model/
+  training/
+  Dockerfile
+  requirements.txt
+frontend/
+  app/
+  lib/
+  package.json
 docs/
+FEATURES.md
+BACKLOG.md
 ```
 
-## Quick Start
+## Stack
 
-1. Create a virtual environment.
-2. Install dependencies with `pip install -r requirements.txt`.
-3. Train or refresh the model with `python3 training/train.py`.
-4. Start the API with `uvicorn app.main:app --reload`.
-5. Open `http://127.0.0.1:8000/` for the dashboard or `http://127.0.0.1:8000/docs` for the API docs.
+- Frontend: Next.js
+- Backend: FastAPI
+- Primary database direction: PostgreSQL
+- Current local fallback database: SQLite
 
-## Key Endpoints
+## Current State
 
-- `GET /`
-- `GET /app`
-- `GET /health`
-- `GET /metadata`
-- `POST /predict`
-- `POST /predict/latest`
+- `backend/` contains the working market intelligence API, auth, watchlists, alerts, subscriptions, and desk collaboration logic.
+- `frontend/` now contains the new Next.js product shell and login flow foundation.
+- The legacy terminal UI still exists inside the backend during migration, so product work can continue without blocking on the frontend rewrite.
 
-## Documentation
+## Local Development
 
-- [Product Overview](/mnt/c/Users/shahk/visual studio projects/regime/docs/product-overview.md)
-- [Builder Checklist](/mnt/c/Users/shahk/visual studio projects/regime/docs/builder-checklist.md)
-- [Original PRD](/mnt/c/Users/shahk/visual studio projects/regime/prd.md)
+### Backend
 
-## Deployment
+1. Create a Python virtual environment.
+2. Install backend dependencies:
 
-The included `Dockerfile` packages the inference API for deployment on DigitalOcean App Platform or a container-based Droplet workflow.
+```bash
+cd backend
+pip install -r requirements.txt
+```
+
+3. Start the API:
+
+```bash
+uvicorn app.main:app --reload
+```
+
+### Frontend
+
+1. Install dependencies:
+
+```bash
+cd frontend
+npm install
+```
+
+2. Copy env settings:
+
+```bash
+cp .env.example .env.local
+```
+
+3. Start the Next.js app:
+
+```bash
+npm run dev
+```
+
+## Hosting Direction
+
+- Frontend: deploy `frontend/` to DigitalOcean App Platform as a Next.js app
+- Backend: deploy `backend/` to DigitalOcean App Platform as a FastAPI service
+- Database: move from local SQLite to PostgreSQL for hosted environments
+
+## Environment Notes
+
+### Backend
+
+- `DATABASE_URL`
+- `FRONTEND_ORIGIN`
+- `CORS_ORIGINS`
+- `REGIME_SESSION_SECURE`
+- `REGIME_SESSION_SAMESITE`
+- `ALPHA_VANTAGE_API_KEY`
+
+### Frontend
+
+- `NEXT_PUBLIC_API_BASE_URL`
+
+## Product References
+
+- [Feature Inventory](/mnt/c/Users/shahk/visual%20studio%20projects/regime/FEATURES.md)
+- [Backlog](/mnt/c/Users/shahk/visual%20studio%20projects/regime/BACKLOG.md)
+- [Product Overview](/mnt/c/Users/shahk/visual%20studio%20projects/regime/docs/product-overview.md)
