@@ -1,6 +1,9 @@
+import asyncio
+import json
 import time
+from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -80,6 +83,7 @@ from app.services.auth import (
     current_user_or_401,
     delete_session,
     generate_password_reset_token,
+    get_user_from_session,
     reset_password,
     update_user_tier,
     register_user,
@@ -689,6 +693,41 @@ def global_macro_briefing(current_user: dict = Depends(current_user_or_401)):
 def world_affairs_timeline(limit: int = 6, current_user: dict = Depends(current_user_or_401)):
     limit = min(max(limit, 3), 10)
     return _cached_world_timeline(limit)
+
+
+@app.websocket("/ws/world-affairs")
+async def ws_world_affairs(websocket: WebSocket):
+    token = websocket.cookies.get(SESSION_COOKIE_NAME)
+    user = get_user_from_session(token)
+    if not user:
+        await websocket.close(code=1008)
+        return
+
+    await websocket.accept()
+    last_signature = ""
+    try:
+        while True:
+            payload = {
+                "world_affairs": _cached_world_affairs(8),
+                "world_regions": _cached_world_regions(6),
+                "world_briefing": _cached_world_briefing(6),
+                "world_timeline": _cached_world_timeline(6),
+            }
+            signature = json.dumps(payload, sort_keys=True, default=str)
+            if signature != last_signature:
+                await websocket.send_json(
+                    {
+                        "type": "world_update",
+                        "as_of": datetime.now(timezone.utc).isoformat(),
+                        **payload,
+                    }
+                )
+                last_signature = signature
+            await asyncio.sleep(6)
+    except WebSocketDisconnect:
+        return
+    except Exception:
+        await websocket.close(code=1011)
 
 
 @app.get("/watchlist/news", response_model=list[WatchlistNewsItem], tags=["terminal"])

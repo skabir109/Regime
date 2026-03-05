@@ -320,8 +320,27 @@ type GeoRegionHeat = GeoRegionDescriptor & {
 
 type WorldCountryPath = {
   id: string;
+  name: string;
   path: string;
   region: GeoRegionKey;
+  centroid: [number, number];
+  center: [number, number];
+};
+
+type CountryHeatPoint = WorldCountryPath & {
+  rawScore: number;
+  intensity: number;
+  fill: string;
+  drivers: string[];
+};
+
+type WorldWsPayload = {
+  type: "world_update";
+  as_of: string;
+  world_affairs: WorldAffairsEvent[];
+  world_regions: WorldAffairsRegionSummary[];
+  world_briefing: WorldAffairsBriefing;
+  world_timeline: NarrativeTimelineItem[];
 };
 
 type Metadata = {
@@ -577,6 +596,25 @@ function formatDateTime(value?: string | null, timezoneName: string = "local") {
   } catch {
     return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
   }
+}
+
+function buildWorldWsUrl() {
+  const explicit = (process.env.NEXT_PUBLIC_WS_BASE_URL || "").trim();
+  if (explicit) {
+    return `${explicit.replace(/\/$/, "")}/ws/world-affairs`;
+  }
+  const apiBase = (process.env.NEXT_PUBLIC_API_BASE_URL || "").trim();
+  if (apiBase.startsWith("http://") || apiBase.startsWith("https://")) {
+    const wsBase = apiBase
+      .replace(/^http:\/\//, "ws://")
+      .replace(/^https:\/\//, "wss://")
+      .replace(/\/api\/?$/, "");
+    return `${wsBase.replace(/\/$/, "")}/ws/world-affairs`;
+  }
+  if (typeof window === "undefined") {
+    return "";
+  }
+  return `${window.location.protocol === "https:" ? "wss" : "ws"}://127.0.0.1:8000/ws/world-affairs`;
 }
 
 function toneClass(value?: string | null) {
@@ -874,10 +912,10 @@ function buildWorldMapPaths() {
     worldAtlasCountries as never,
     (worldAtlasCountries as { objects: { countries: unknown } }).objects.countries as never,
   ) as unknown as {
-    features: Array<{ id?: string | number }>;
+    features: Array<{ id?: string | number; properties?: { name?: string } }>;
   };
 
-  const projection = geoNaturalEarth1().fitSize([520, 280], countries as never);
+  const projection = geoNaturalEarth1().fitExtent([[12, 12], [508, 268]], countries as never);
   const pathGenerator = geoPath(projection);
   const graticulePath = pathGenerator(geoGraticule10()) || "";
 
@@ -888,10 +926,14 @@ function buildWorldMapPaths() {
       continue;
     }
     const [lon, lat] = geoCentroid(country as never);
+    const center = projection([lon, lat]) || [0, 0];
     countryPaths.push({
       id: String(country.id ?? `${lon}-${lat}`),
+      name: country.properties?.name || `Country ${String(country.id ?? "")}`,
       path,
       region: countryRegionFromCentroid(lon, lat),
+      centroid: [lon, lat],
+      center: [center[0], center[1]],
     });
   }
 
@@ -1057,6 +1099,121 @@ function buildGeoHeatmapScores(regions: WorldAffairsRegionSummary[], events: Wor
       rawScore,
       intensity,
       fill: heatColor(intensity),
+    };
+  });
+}
+
+const REGION_ANCHORS: Record<GeoRegionKey, [number, number]> = {
+  north_america: [-100, 40],
+  south_america: [-60, -15],
+  europe: [15, 52],
+  africa: [20, 5],
+  middle_east: [45, 29],
+  asia: [105, 34],
+  oceania: [134, -25],
+};
+
+const EVENT_LOCATION_KEYWORDS: Array<{ keywords: string[]; coord: [number, number] }> = [
+  { keywords: ["iran", "tehran"], coord: [53, 32] },
+  { keywords: ["israel", "gaza", "jerusalem"], coord: [35, 31.5] },
+  { keywords: ["saudi", "riyadh"], coord: [45, 24] },
+  { keywords: ["red sea", "houthi", "yemen"], coord: [43, 16] },
+  { keywords: ["hormuz", "oman"], coord: [57, 25] },
+  { keywords: ["ukraine"], coord: [31, 49] },
+  { keywords: ["russia", "moscow"], coord: [37, 56] },
+  { keywords: ["china", "beijing"], coord: [104, 35] },
+  { keywords: ["taiwan"], coord: [121, 24] },
+  { keywords: ["japan"], coord: [138, 37] },
+  { keywords: ["india"], coord: [79, 22] },
+  { keywords: ["united states", "u.s.", "us "], coord: [-98, 39] },
+];
+
+type EventAnchor = {
+  lon: number;
+  lat: number;
+  weight: number;
+  eventTitle: string;
+  region: GeoRegionKey;
+};
+
+function haversineKm(a: [number, number], b: [number, number]) {
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const dLat = toRad(b[1] - a[1]);
+  const dLon = toRad(b[0] - a[0]);
+  const lat1 = toRad(a[1]);
+  const lat2 = toRad(b[1]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function eventAnchors(events: WorldAffairsEvent[]) {
+  const anchors: EventAnchor[] = [];
+  for (const event of events || []) {
+    const region = inferGeoRegionKey(event.region, event.theme, event.title, event.summary) || fallbackThemeRegion(event.theme) || "asia";
+    const text = `${event.title} ${event.summary || ""} ${event.region} ${event.theme}`.toLowerCase();
+    const baseWeight = severityWeight(event.severity || "") + urgencyWeight(event.urgency || "");
+    const matches = EVENT_LOCATION_KEYWORDS.filter((item) => item.keywords.some((keyword) => text.includes(keyword)));
+
+    if (matches.length) {
+      for (const match of matches.slice(0, 2)) {
+        anchors.push({
+          lon: match.coord[0],
+          lat: match.coord[1],
+          weight: baseWeight,
+          eventTitle: event.title,
+          region,
+        });
+      }
+      continue;
+    }
+
+    const fallback = REGION_ANCHORS[region];
+    anchors.push({
+      lon: fallback[0],
+      lat: fallback[1],
+      weight: baseWeight,
+      eventTitle: event.title,
+      region,
+    });
+  }
+  return anchors;
+}
+
+function buildCountryHeatmap(countries: WorldCountryPath[], geoHeatmap: GeoRegionHeat[], events: WorldAffairsEvent[]): CountryHeatPoint[] {
+  const anchors = eventAnchors(events);
+  const regionIntensity = new Map<GeoRegionKey, number>(geoHeatmap.map((item) => [item.key, item.intensity]));
+  const scored = countries.map((country) => {
+    let raw = (regionIntensity.get(country.region) || 0) * 0.35;
+    const drivers: Array<{ title: string; value: number }> = [];
+
+    for (const anchor of anchors) {
+      const distance = haversineKm(country.centroid, [anchor.lon, anchor.lat]);
+      const spread = anchor.region === country.region ? 2200 : 1500;
+      const contribution = anchor.weight * Math.exp(-((distance / spread) ** 2));
+      raw += contribution;
+      if (contribution > 0.025) {
+        drivers.push({ title: anchor.eventTitle, value: contribution });
+      }
+    }
+
+    const topDrivers = [...drivers]
+      .sort((a, b) => b.value - a.value)
+      .map((item) => item.title)
+      .filter((title, index, list) => list.indexOf(title) === index)
+      .slice(0, 2);
+
+    return { country, raw, topDrivers };
+  });
+
+  const maxRaw = Math.max(0.001, ...scored.map((item) => item.raw));
+  return scored.map(({ country, raw, topDrivers }) => {
+    const intensity = Math.max(0.05, Math.min(1, raw / maxRaw));
+    return {
+      ...country,
+      rawScore: raw,
+      intensity,
+      fill: heatColor(intensity),
+      drivers: topDrivers,
     };
   });
 }
@@ -1313,6 +1470,15 @@ export default function TerminalShell() {
   });
   const [selectedAlertKey, setSelectedAlertKey] = useState("");
   const [worldLastUpdatedAt, setWorldLastUpdatedAt] = useState<string>("");
+  const [worldSocketConnected, setWorldSocketConnected] = useState(false);
+  const [hoveredCountry, setHoveredCountry] = useState<{
+    x: number;
+    y: number;
+    name: string;
+    region: string;
+    intensity: number;
+    drivers: string[];
+  } | null>(null);
   const aiCacheRef = useRef<Map<string, { expiresAt: number; value: AIAnalyzeResponse }>>(new Map());
   const aiInflightRef = useRef<Map<string, Promise<AIAnalyzeResponse>>>(new Map());
   const aiSignatureRef = useRef({
@@ -1657,10 +1823,10 @@ export default function TerminalShell() {
 
       if (view === "world") {
         const [worldAffairs, worldRegions, worldBriefing, worldTimeline] = await Promise.all([
-          apiFetch<WorldAffairsEvent[]>("/world-affairs/monitor"),
-          apiFetch<WorldAffairsRegionSummary[]>("/world-affairs/regions"),
-          apiFetch<WorldAffairsBriefing>("/briefing/global-macro"),
-          apiFetch<NarrativeTimelineItem[]>("/world-affairs/timeline"),
+          apiFetch<WorldAffairsEvent[]>("/world-affairs/monitor", { force }),
+          apiFetch<WorldAffairsRegionSummary[]>("/world-affairs/regions", { force }),
+          apiFetch<WorldAffairsBriefing>("/briefing/global-macro", { force }),
+          apiFetch<NarrativeTimelineItem[]>("/world-affairs/timeline", { force }),
         ]);
         setData((current) =>
           current ? { ...current, worldAffairs, worldRegions, worldBriefing, worldTimeline } : current,
@@ -1843,7 +2009,84 @@ export default function TerminalShell() {
   ]);
 
   useEffect(() => {
+    if (activeView !== "world" || !loadedViews.world) {
+      setWorldSocketConnected(false);
+      return;
+    }
+    const wsUrl = buildWorldWsUrl();
+    if (!wsUrl) {
+      setWorldSocketConnected(false);
+      return;
+    }
+
+    let disposed = false;
+    let reconnectTimer: number | undefined;
+    let socket: WebSocket | null = null;
+
+    const connect = () => {
+      if (disposed) {
+        return;
+      }
+      try {
+        socket = new WebSocket(wsUrl);
+      } catch {
+        setWorldSocketConnected(false);
+        reconnectTimer = window.setTimeout(connect, 2500);
+        return;
+      }
+      socket.onopen = () => {
+        setWorldSocketConnected(true);
+      };
+      socket.onmessage = (message) => {
+        try {
+          const payload = JSON.parse(message.data as string) as WorldWsPayload;
+          if (payload.type !== "world_update") {
+            return;
+          }
+          setData((current) =>
+            current
+              ? {
+                  ...current,
+                  worldAffairs: payload.world_affairs || [],
+                  worldRegions: payload.world_regions || [],
+                  worldBriefing: payload.world_briefing || emptyWorldBriefing(),
+                  worldTimeline: payload.world_timeline || [],
+                }
+              : current,
+          );
+          setWorldLastUpdatedAt(payload.as_of || new Date().toISOString());
+        } catch {
+          // Ignore malformed socket payloads and keep polling fallback active.
+        }
+      };
+      socket.onclose = () => {
+        setWorldSocketConnected(false);
+        if (!disposed) {
+          reconnectTimer = window.setTimeout(connect, 2500);
+        }
+      };
+      socket.onerror = () => {
+        setWorldSocketConnected(false);
+        socket?.close();
+      };
+    };
+
+    connect();
+    return () => {
+      disposed = true;
+      setWorldSocketConnected(false);
+      if (reconnectTimer !== undefined) {
+        window.clearTimeout(reconnectTimer);
+      }
+      socket?.close();
+    };
+  }, [activeView, loadedViews.world]);
+
+  useEffect(() => {
     if (activeView !== "world" || !data || !loadedViews.world) {
+      return;
+    }
+    if (worldSocketConnected) {
       return;
     }
     const refreshWorldData = () => {
@@ -1863,7 +2106,7 @@ export default function TerminalShell() {
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [activeView, data, loadedViews.world]);
+  }, [activeView, data, loadedViews.world, worldSocketConnected]);
 
   useEffect(() => {
     const updateClock = () => setClock(new Date().toLocaleTimeString());
@@ -2163,7 +2406,8 @@ export default function TerminalShell() {
   const worldWhatMatters = pickSectionItems(parsedWorldAnalysis, ["Why It Matters Now"], 3);
   const worldFirstOrder = pickSectionItems(parsedWorldAnalysis, ["First-Order Market Effects"], 4);
   const geoHeatmap = buildGeoHeatmapScores(data?.worldRegions || [], data?.worldAffairs || []);
-  const geoHeatFillByRegion = new Map<GeoRegionKey, string>(geoHeatmap.map((item) => [item.key, item.fill]));
+  const countryHeatmap = buildCountryHeatmap(WORLD_MAP.countryPaths, geoHeatmap, data?.worldAffairs || []);
+  const countryHeatById = new Map<string, CountryHeatPoint>(countryHeatmap.map((item) => [item.id, item]));
   const topGeoHotspots = [...geoHeatmap]
     .sort((a, b) => b.rawScore - a.rawScore)
     .slice(0, 3)
@@ -2930,7 +3174,8 @@ export default function TerminalShell() {
                 <div className="nt-world-map-header">
                   <span className="eyebrow">Geopolitical Heatmap</span>
                   <span className="nt-world-map-live">
-                    Live {worldLastUpdatedAt ? `• Updated ${formatDateTime(worldLastUpdatedAt, currentTimezone)}` : ""}
+                    {worldSocketConnected ? "Live WebSocket" : "Live Polling"}{" "}
+                    {worldLastUpdatedAt ? `• Updated ${formatDateTime(worldLastUpdatedAt, currentTimezone)}` : ""}
                   </span>
                 </div>
                 <div className="nt-world-map-wrap">
@@ -2938,12 +3183,39 @@ export default function TerminalShell() {
                     <rect x="1" y="1" width="518" height="278" className="nt-world-map-frame" />
                     <path d={WORLD_MAP.graticulePath} className="nt-world-map-grid" />
                     {WORLD_MAP.countryPaths.map((country) => {
+                      const countryPoint = countryHeatById.get(country.id);
                       return (
                         <path
                           key={`geo-country-${country.id}`}
                           d={country.path}
-                          fill={geoHeatFillByRegion.get(country.region) || "rgba(87, 212, 255, 0.16)"}
+                          fill={countryPoint?.fill || "rgba(87, 212, 255, 0.16)"}
                           className="nt-world-map-region"
+                          onMouseEnter={(event) => {
+                            const svgRect = event.currentTarget.ownerSVGElement?.getBoundingClientRect();
+                            if (!svgRect || !countryPoint) {
+                              return;
+                            }
+                            setHoveredCountry({
+                              x: event.clientX - svgRect.left + 12,
+                              y: event.clientY - svgRect.top + 12,
+                              name: countryPoint.name,
+                              region: GEO_REGIONS.find((item) => item.key === countryPoint.region)?.label || countryPoint.region,
+                              intensity: countryPoint.intensity,
+                              drivers: countryPoint.drivers,
+                            });
+                          }}
+                          onMouseMove={(event) => {
+                            setHoveredCountry((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    x: event.nativeEvent.offsetX + 12,
+                                    y: event.nativeEvent.offsetY + 12,
+                                  }
+                                : current,
+                            );
+                          }}
+                          onMouseLeave={() => setHoveredCountry(null)}
                         />
                       );
                     })}
@@ -2975,6 +3247,20 @@ export default function TerminalShell() {
                       </g>
                     ))}
                   </svg>
+                  {hoveredCountry ? (
+                    <div
+                      className="nt-world-map-tooltip"
+                      style={{
+                        left: `${Math.min(420, hoveredCountry.x)}px`,
+                        top: `${Math.min(232, hoveredCountry.y)}px`,
+                      }}
+                    >
+                      <strong>{hoveredCountry.name}</strong>
+                      <span>{hoveredCountry.region}</span>
+                      <span>Intensity {(hoveredCountry.intensity * 100).toFixed(0)}%</span>
+                      <span>{hoveredCountry.drivers[0] || "No dominant event driver"}</span>
+                    </div>
+                  ) : null}
                 </div>
                 <ul className="plain-list">
                   {(topGeoHotspots.length ? topGeoHotspots : geoHeatmap.slice(0, 3)).map((item) => (

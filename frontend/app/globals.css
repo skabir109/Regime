@@ -1206,8 +1206,8 @@ select {
 }
 
 .nt-panel {
-  min-height: 220px;
-  padding: 18px;
+  min-height: 120px;
+  padding: 12px 14px;
   border: 1px solid var(--line);
   background: linear-gradient(180deg, var(--panel-strong), var(--panel));
   position: relative;
@@ -1271,12 +1271,11 @@ select {
 }
 
 .nt-regime {
-  font-size: clamp(2.3rem, 4.6vw, 4.6rem);
+  font-size: clamp(1.8rem, 3.8vw, 3.4rem);
   line-height: 0.9;
   color: var(--cyan);
   text-shadow: 0 0 12px rgba(77, 226, 255, 0.12);
 }
-
 .nt-hero-copy,
 .nt-copy p,
 .nt-list-item p,
@@ -1286,17 +1285,18 @@ select {
 .nt-briefing-copy p {
   margin: 0;
   color: var(--muted);
-  line-height: 1.7;
+  line-height: 1.6;
+  font-size: 0.92rem;
 }
 
 .nt-confidence {
-  min-width: 168px;
-  max-width: 186px;
-  padding: 16px 14px;
+  min-width: 130px;
+  max-width: 150px;
+  padding: 10px;
   border: 1px solid var(--line);
   text-align: center;
   display: grid;
-  gap: 6px;
+  gap: 4px;
   align-content: center;
   flex: 0 0 auto;
   overflow: hidden;
@@ -1304,7 +1304,7 @@ select {
 
 .nt-confidence span {
   display: block;
-  font-size: clamp(1.5rem, 2.2vw, 1.95rem);
+  font-size: clamp(1.3rem, 1.8vw, 1.6rem);
   line-height: 1;
   color: var(--amber);
   overflow-wrap: anywhere;
@@ -1323,14 +1323,14 @@ select {
   gap: 12px;
 }
 
-.nt-context-grid {
+.nt-state-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
-
-.nt-context-grid > div {
-  padding: 10px 12px;
+...
+.nt-state-grid > div {
+  padding: 10px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.02);
   min-width: 0;
@@ -1357,7 +1357,7 @@ select {
 }
 
 .nt-state-grid > div {
-  padding: 12px;
+  padding: 10px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.02);
   min-width: 0;
@@ -1365,7 +1365,7 @@ select {
 
 .nt-state-grid span {
   display: block;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   color: var(--muted);
   font-size: 0.78rem;
   letter-spacing: 0.12em;
@@ -1382,7 +1382,7 @@ select {
 .nt-form,
 .nt-briefing-copy {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .nt-ai-content {
@@ -1418,7 +1418,7 @@ select {
 .nt-news-item,
 .nt-alert,
 .nt-watchlist-item {
-  padding: 12px;
+  padding: 10px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.02);
   min-width: 0;
@@ -1721,6 +1721,7 @@ select.nt-select:hover {
   min-height: 0;
   display: grid;
   gap: 10px;
+  overflow: visible;
 }
 
 .nt-world-map-header {
@@ -1744,12 +1745,15 @@ select.nt-select:hover {
     radial-gradient(circle at 20% 20%, rgba(87, 212, 255, 0.06), transparent 46%),
     rgba(255, 255, 255, 0.02);
   padding: 10px;
+  position: relative;
+  overflow: visible;
 }
 
 .nt-world-map {
   width: 100%;
   height: auto;
   display: block;
+  overflow: visible;
 }
 
 .nt-world-map-frame {
@@ -1773,6 +1777,8 @@ select.nt-select:hover {
 
 .nt-world-map-region:hover {
   opacity: 0.92;
+  stroke: rgba(255, 255, 255, 0.75);
+  stroke-width: 0.9;
 }
 
 .nt-world-map-hotspot-ring {
@@ -1809,6 +1815,22 @@ select.nt-select:hover {
   font-size: 0.78rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.nt-world-map-tooltip {
+  position: absolute;
+  z-index: 5;
+  display: grid;
+  gap: 2px;
+  min-width: 180px;
+  max-width: 260px;
+  padding: 8px 10px;
+  border: 1px solid rgba(87, 212, 255, 0.35);
+  background: rgba(7, 11, 18, 0.92);
+  color: rgba(240, 247, 255, 0.95);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  pointer-events: none;
 }
 
 .nt-world-map-gradient {
@@ -2039,5 +2061,129 @@ select.nt-select:hover {
 
   .terminal-footer {
     flex-wrap: wrap;
+  }
+}
+
+/* --- Enhanced Intelligence Styles --- */
+.nt-executive-summary {
+  grid-column: span 3;
+}
+
+.nt-executive-summary .lead-copy {
+  font-size: 1.05rem;
+  line-height: 1.5;
+  color: var(--text);
+  border-left: 3px solid var(--cyan);
+  padding-left: 14px;
+  margin: 8px 0;
+}
+
+.nt-playbook {
+  grid-column: span 3;
+  border-color: rgba(129, 242, 164, 0.2);
+}
+
+.nt-playbook-content {
+  display: grid;
+  gap: 20px;
+  margin-top: 12px;
+}
+
+.nt-posture {
+  display: grid;
+  gap: 4px;
+}
+
+.nt-posture span {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+}
+
+.nt-posture strong {
+  font-size: 1.2rem;
+  color: var(--green);
+}
+
+.nt-playbook-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.nt-playbook-grid h4 {
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 12px;
+  letter-spacing: 0.05em;
+}
+
+.nt-impact-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 8px 0;
+  font-size: 0.85rem;
+}
+
+.nt-impact-row.nt-mini {
+  margin: 4px 0;
+  font-size: 0.78rem;
+}
+
+.nt-sentiment {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.nt-sentiment.positive { background: rgba(129, 242, 164, 0.1); color: var(--green); }
+.nt-sentiment.negative { background: rgba(255, 109, 123, 0.1); color: var(--red); }
+.nt-sentiment.neutral { background: rgba(242, 179, 106, 0.1); color: var(--amber); }
+
+.nt-bias {
+  color: var(--cyan);
+  font-style: italic;
+}
+
+.nt-watch-point {
+  background: rgba(87, 212, 255, 0.05);
+  padding: 12px;
+  border: 1px dashed var(--line-bright);
+  font-size: 0.9rem;
+}
+
+.nt-overview-main-row {
+  grid-column: span 3;
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 16px;
+}
+
+.nt-overview-main-row .nt-panel {
+  min-height: 0;
+}
+
+.nt-grid-row {
+  grid-column: span 3;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 1180px) {
+  .nt-overview-main-row,
+  .nt-grid-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .nt-playbook-grid {
+    grid-template-columns: 1fr;
   }
 }
