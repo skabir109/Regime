@@ -243,19 +243,19 @@ def _cached_news(limit: int):
 
 
 def _cached_world_affairs(limit: int):
-    return _cached(f"world_affairs:{limit}", 60, lambda: build_world_affairs_monitor(limit=limit))
+    return _cached(f"world_affairs:{limit}", 20, lambda: build_world_affairs_monitor(limit=limit))
 
 
 def _cached_world_regions(limit: int):
-    return _cached(f"world_regions:{limit}", 60, lambda: build_world_affairs_regions(limit=limit))
+    return _cached(f"world_regions:{limit}", 20, lambda: build_world_affairs_regions(limit=limit))
 
 
 def _cached_world_briefing(limit: int):
-    return _cached(f"world_briefing:{limit}", 60, lambda: build_world_affairs_briefing(limit=limit))
+    return _cached(f"world_briefing:{limit}", 20, lambda: build_world_affairs_briefing(limit=limit))
 
 
 def _cached_world_timeline(limit: int):
-    return _cached(f"world_timeline:{limit}", 60, lambda: build_narrative_timeline(limit=limit))
+    return _cached(f"world_timeline:{limit}", 20, lambda: build_narrative_timeline(limit=limit))
 
 
 def _cached_signals(limit: int):

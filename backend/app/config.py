@@ -45,3 +45,6 @@ LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.1-8b-instruct")
 LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "20"))
 AI_ANALYZE_CACHE_TTL_SECONDS = int(os.getenv("AI_ANALYZE_CACHE_TTL_SECONDS", "180"))
 AI_ANALYZE_CACHE_MAX_ENTRIES = int(os.getenv("AI_ANALYZE_CACHE_MAX_ENTRIES", "512"))
+AI_ANALYZE_CACHE_PATH = Path(
+    os.getenv("AI_ANALYZE_CACHE_PATH", str(BASE_DIR / "data" / "ai_analyze_cache.json"))
+)

@@ -1,10 +1,14 @@
+import time
 import numpy as np
 
 from app.services.features import build_feature_frame, compute_market_panels, compute_market_snapshot, load_prices
 from app.services.inference import predict_latest
+from app.services.llm import generate_executive_summary
 from app.services.news import fetch_market_news
 from app.services.playbook import get_playbook_for_regime
 from app.services.sectors import fetch_sector_breadth
+
+_SUMMARY_CACHE = {"text": "", "timestamp": 0.0}
 
 
 def _tone_from_value(value: float, positive_threshold: float, negative_threshold: float) -> str:
@@ -229,6 +233,14 @@ def build_market_state_summary(model, meta: dict) -> dict:
         "Use World Affairs to confirm whether headline flow supports or threatens the current tape.",
     ]
 
+    # Executive Summary with 5-minute cache to avoid redundant slow LLM calls
+    global _SUMMARY_CACHE
+    now_ts = time.time()
+    if not _SUMMARY_CACHE["text"] or (now_ts - _SUMMARY_CACHE["timestamp"] > 300):
+        headline_texts = [n["title"] for n in news]
+        _SUMMARY_CACHE["text"] = generate_executive_summary(prediction.regime, prediction.confidence, headline_texts)
+        _SUMMARY_CACHE["timestamp"] = now_ts
+
     return {
         "regime": prediction.regime,
         "confidence": prediction.confidence,
@@ -237,6 +249,7 @@ def build_market_state_summary(model, meta: dict) -> dict:
         "trend_strength": trend_strength,
         "cross_asset_confirmation": cross_asset_confirmation,
         "summary": summary,
+        "executive_summary": _SUMMARY_CACHE["text"],
         "playbook": get_playbook_for_regime(prediction.regime),
         "drivers": drivers,
         "warnings": warnings,

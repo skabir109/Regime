@@ -10,12 +10,21 @@ import requests
 from sqlmodel import Session, select
 
 from app.config import SESSION_COOKIE_NAME, SESSION_DURATION_HOURS, SUPABASE_ANON_KEY, SUPABASE_URL
-from app.services.db import get_engine
+from app.services.db import get_engine, init_db
 from app.schemas import User, DBSession
 from app.services.subscriptions import DEFAULT_TIER, normalize_tier
 
 
 PBKDF2_ITERATIONS = 310000
+_SCHEMA_READY = False
+
+
+def _ensure_schema_ready() -> None:
+    global _SCHEMA_READY
+    if _SCHEMA_READY:
+        return
+    init_db()
+    _SCHEMA_READY = True
 
 
 def hash_password(password: str, salt: bytes | None = None) -> str:
@@ -47,6 +56,7 @@ def _hash_session_token(token: str) -> str:
 
 
 def register_user(email: str, password: str, name: str) -> dict:
+    _ensure_schema_ready()
     normalized_email = email.strip().lower()
     if not normalized_email or "@" not in normalized_email:
         raise ValueError("Valid email is required.")
@@ -77,6 +87,7 @@ def register_user(email: str, password: str, name: str) -> dict:
 
 
 def authenticate_user(email: str, password: str) -> dict:
+    _ensure_schema_ready()
     normalized_email = email.strip().lower()
     with Session(get_engine()) as session:
         user = session.exec(select(User).where(User.email == normalized_email)).first()
@@ -127,6 +138,7 @@ def _default_name_for_email(email: str) -> str:
 
 
 def _upsert_supabase_user(profile: dict) -> dict:
+    _ensure_schema_ready()
     email = (profile.get("email") or "").strip().lower()
     if not email:
         raise ValueError("Supabase user is missing an email address.")
@@ -194,6 +206,7 @@ def authenticate_supabase_access_token(access_token: str) -> dict:
 
 
 def create_session(user_id: int) -> str:
+    _ensure_schema_ready()
     token = secrets.token_urlsafe(32)
     token_hash = _hash_session_token(token)
     now = datetime.now(timezone.utc)
@@ -212,6 +225,7 @@ def create_session(user_id: int) -> str:
 
 
 def delete_session(token: str | None):
+    _ensure_schema_ready()
     if not token:
         return
     token_hash = _hash_session_token(token)
@@ -223,6 +237,7 @@ def delete_session(token: str | None):
 
 
 def get_user_from_session(token: str | None) -> dict | None:
+    _ensure_schema_ready()
     if not token:
         return None
     token_hash = _hash_session_token(token)
@@ -255,6 +270,7 @@ def get_user_from_session(token: str | None) -> dict | None:
         }
 
 def verify_email(token: str) -> bool:
+    _ensure_schema_ready()
     with Session(get_engine()) as session:
         user = session.exec(select(User).where(User.verification_token == token)).first()
         if not user:
@@ -266,6 +282,7 @@ def verify_email(token: str) -> bool:
         return True
 
 def generate_password_reset_token(email: str) -> str:
+    _ensure_schema_ready()
     normalized_email = email.strip().lower()
     with Session(get_engine()) as session:
         user = session.exec(select(User).where(User.email == normalized_email)).first()
@@ -280,6 +297,7 @@ def generate_password_reset_token(email: str) -> str:
         return reset_token
 
 def reset_password(token: str, new_password: str) -> bool:
+    _ensure_schema_ready()
     if len(new_password) < 8:
         raise ValueError("Password must be at least 8 characters.")
     
@@ -307,6 +325,7 @@ def reset_password(token: str, new_password: str) -> bool:
 
 
 def update_user_tier(user_id: int, tier: str) -> dict:
+    _ensure_schema_ready()
     normalized = normalize_tier(tier)
     with Session(get_engine()) as session:
         user = session.get(User, user_id)

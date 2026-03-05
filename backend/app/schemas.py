@@ -391,6 +391,7 @@ class MarketStateSummary(BaseModel):
     trend_strength: str
     cross_asset_confirmation: str
     summary: str
+    executive_summary: str = ""
     playbook: Playbook | None = None
     drivers: list[RegimeDriver] = []
     warnings: list[str] = []

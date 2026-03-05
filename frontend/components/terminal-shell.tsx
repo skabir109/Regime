@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { feature } from "topojson-client";
+import { geoCentroid, geoGraticule10, geoNaturalEarth1, geoPath } from "d3-geo";
+import worldAtlasCountries from "world-atlas/countries-110m.json";
 import { apiFetch } from "@/lib/api";
 
 type ViewKey = "monitor" | "briefing" | "world" | "markets" | "signals" | "desk" | "news" | "system";
@@ -34,6 +37,20 @@ type MarketLeader = {
   value: number;
 };
 
+type PlaybookAssetAllocation = {
+  asset: string;
+  weight: string;
+  target: string;
+};
+
+type Playbook = {
+  title: string;
+  posture: string;
+  actions: string[];
+  asset_allocation: PlaybookAssetAllocation[];
+  tactical_watch: string;
+};
+
 type MarketStateSummary = {
   regime: string;
   confidence: number;
@@ -42,6 +59,8 @@ type MarketStateSummary = {
   trend_strength: string;
   cross_asset_confirmation: string;
   summary: string;
+  executive_summary: string;
+  playbook?: Playbook;
   drivers: RegimeDriver[];
   warnings: string[];
   leaders: MarketLeader[];
@@ -82,6 +101,8 @@ type WorldAffairsEvent = {
   region: string;
   urgency: string;
   severity: string;
+  sentiment: string;
+  directional_bias: string;
   affected_assets: string[];
   market_view: string[];
   second_order_effects: string[];
@@ -181,6 +202,8 @@ type WatchlistExposure = {
   symbol: string;
   label: string;
   sensitivity: string;
+  sentiment: string;
+  directional_bias: string;
   themes: string[];
   drivers: string[];
   market_links: string[];
@@ -272,6 +295,33 @@ type ParsedAIBriefing = {
 type ParsedAISections = {
   order: string[];
   sections: Record<string, string[]>;
+};
+
+type GeoRegionKey =
+  | "north_america"
+  | "south_america"
+  | "europe"
+  | "africa"
+  | "middle_east"
+  | "asia"
+  | "oceania";
+
+type GeoRegionDescriptor = {
+  key: GeoRegionKey;
+  label: string;
+  center: [number, number];
+};
+
+type GeoRegionHeat = GeoRegionDescriptor & {
+  rawScore: number;
+  intensity: number;
+  fill: string;
+};
+
+type WorldCountryPath = {
+  id: string;
+  path: string;
+  region: GeoRegionKey;
 };
 
 type Metadata = {
@@ -602,6 +652,20 @@ function stripMarkdown(value: string) {
   return value.replace(/\*\*/g, "").trim();
 }
 
+function splitInlineBullets(value: string) {
+  const cleaned = stripMarkdown(value).replace(/\s+/g, " ").trim();
+  if (!cleaned) {
+    return [];
+  }
+  if (!cleaned.includes("•")) {
+    return [cleaned];
+  }
+  return cleaned
+    .split(/\s*•\s*/g)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
 function uniqueItems(items: string[], limit: number) {
   const seen = new Set<string>();
   const output: string[] = [];
@@ -651,17 +715,17 @@ function parseAISections(content: string): ParsedAISections {
       }
       const trailing = stripMarkdown(headerMatch[2] || "");
       if (trailing) {
-        parsed.sections[current].push(trailing);
+        parsed.sections[current].push(...splitInlineBullets(trailing));
       }
       continue;
     }
 
     const bulletMatch = line.match(/^(?:-|[*]|\d+[.])\s+(.*)$/);
-    const value = stripMarkdown((bulletMatch ? bulletMatch[1] : line) || "");
-    if (!value || !current) {
+    const values = splitInlineBullets((bulletMatch ? bulletMatch[1] : line) || "");
+    if (!values.length || !current) {
       continue;
     }
-    parsed.sections[current].push(value);
+    parsed.sections[current].push(...values);
   }
 
   return parsed;
@@ -719,30 +783,282 @@ function parseAIBriefingContent(content: string): ParsedAIBriefing {
       currentSection = mapped || "";
       const trailing = stripMarkdown(headerMatch[2] || "");
       if (currentSection === "headline" && trailing) {
-        parsed.headline = trailing;
+        parsed.headline = splitInlineBullets(trailing)[0] || trailing;
       } else if (currentSection && trailing && currentSection !== "headline") {
-        (parsed[currentSection] as string[]).push(trailing);
+        (parsed[currentSection] as string[]).push(...splitInlineBullets(trailing));
       }
       continue;
     }
 
     const bulletMatch = line.match(/^(?:-|[*]|\d+[.])\s+(.*)$/);
-    const value = stripMarkdown((bulletMatch ? bulletMatch[1] : line) || "");
-    if (!value || !currentSection) {
+    const values = splitInlineBullets((bulletMatch ? bulletMatch[1] : line) || "");
+    if (!values.length || !currentSection) {
       continue;
     }
 
     if (currentSection === "headline") {
       if (!parsed.headline) {
-        parsed.headline = value;
+        parsed.headline = values[0];
       }
       continue;
     }
 
-    (parsed[currentSection] as string[]).push(value);
+    (parsed[currentSection] as string[]).push(...values);
   }
 
   return parsed;
+}
+
+const GEO_REGIONS: GeoRegionDescriptor[] = [
+  {
+    key: "north_america",
+    label: "North America",
+    center: [90, 84],
+  },
+  {
+    key: "south_america",
+    label: "South America",
+    center: [136, 192],
+  },
+  {
+    key: "europe",
+    label: "Europe",
+    center: [272, 76],
+  },
+  {
+    key: "africa",
+    label: "Africa",
+    center: [278, 152],
+  },
+  {
+    key: "middle_east",
+    label: "Middle East",
+    center: [322, 106],
+  },
+  {
+    key: "asia",
+    label: "Asia",
+    center: [388, 112],
+  },
+  {
+    key: "oceania",
+    label: "Oceania",
+    center: [442, 192],
+  },
+];
+
+function countryRegionFromCentroid(lon: number, lat: number): GeoRegionKey {
+  if (lon >= 30 && lon <= 66 && lat >= 12 && lat <= 42) {
+    return "middle_east";
+  }
+  if (lon < -25 && lat < 15) {
+    return "south_america";
+  }
+  if (lon < -25) {
+    return "north_america";
+  }
+  if (lon >= -26 && lon <= 46 && lat >= 35) {
+    return "europe";
+  }
+  if (lon >= -20 && lon <= 55 && lat > -35 && lat < 38) {
+    return "africa";
+  }
+  if (lon >= 110 && lat <= -10) {
+    return "oceania";
+  }
+  return "asia";
+}
+
+function buildWorldMapPaths() {
+  const countries = feature(
+    worldAtlasCountries as never,
+    (worldAtlasCountries as { objects: { countries: unknown } }).objects.countries as never,
+  ) as unknown as {
+    features: Array<{ id?: string | number }>;
+  };
+
+  const projection = geoNaturalEarth1().fitSize([520, 280], countries as never);
+  const pathGenerator = geoPath(projection);
+  const graticulePath = pathGenerator(geoGraticule10()) || "";
+
+  const countryPaths: WorldCountryPath[] = [];
+  for (const country of countries.features) {
+    const path = pathGenerator(country as never);
+    if (!path) {
+      continue;
+    }
+    const [lon, lat] = geoCentroid(country as never);
+    countryPaths.push({
+      id: String(country.id ?? `${lon}-${lat}`),
+      path,
+      region: countryRegionFromCentroid(lon, lat),
+    });
+  }
+
+  return { countryPaths, graticulePath };
+}
+
+const WORLD_MAP = buildWorldMapPaths();
+
+function toGeoRegionKey(value: string): GeoRegionKey | null {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("middle_east") || normalized.includes("middle-east")) {
+    return "middle_east";
+  }
+  if (normalized.includes("north america") || normalized.includes("u.s.") || normalized.includes("united states")) {
+    return "north_america";
+  }
+  if (normalized.includes("south america") || normalized.includes("latam") || normalized.includes("latin america")) {
+    return "south_america";
+  }
+  if (normalized.includes("europe") || normalized.includes("eu")) {
+    return "europe";
+  }
+  if (normalized.includes("africa")) {
+    return "africa";
+  }
+  if (normalized.includes("middle east") || normalized.includes("mena") || normalized.includes("gulf")) {
+    return "middle_east";
+  }
+  if (normalized.includes("asia") || normalized.includes("china") || normalized.includes("japan") || normalized.includes("india")) {
+    return "asia";
+  }
+  if (normalized.includes("oceania") || normalized.includes("australia") || normalized.includes("new zealand")) {
+    return "oceania";
+  }
+  return null;
+}
+
+const GEO_KEYWORDS: Record<GeoRegionKey, string[]> = {
+  north_america: ["north america", "united states", "u.s.", "us ", "canada", "mexico"],
+  south_america: ["south america", "latam", "latin america", "brazil", "argentina", "chile", "colombia", "peru"],
+  europe: ["europe", "eu", "uk ", "united kingdom", "france", "germany", "italy", "spain", "ukraine", "russia", "nato"],
+  africa: ["africa", "egypt", "algeria", "morocco", "nigeria", "ethiopia", "south africa", "sudan", "libya"],
+  middle_east: [
+    "middle east", "mena", "gulf", "iran", "israel", "gaza", "lebanon", "syria", "yemen", "saudi", "uae", "qatar", "oman", "iraq", "jordan", "red sea", "hormuz", "houthi",
+  ],
+  asia: ["asia", "china", "japan", "india", "taiwan", "korea", "pakistan", "indonesia", "philippines", "vietnam"],
+  oceania: ["oceania", "australia", "new zealand"],
+};
+
+function inferGeoRegionKey(...values: Array<string | null | undefined>): GeoRegionKey | null {
+  const text = values
+    .filter(Boolean)
+    .map((value) => String(value).toLowerCase())
+    .join(" ");
+
+  const explicit = toGeoRegionKey(text);
+  if (explicit) {
+    return explicit;
+  }
+  for (const [key, words] of Object.entries(GEO_KEYWORDS) as Array<[GeoRegionKey, string[]]>) {
+    if (words.some((word) => text.includes(word))) {
+      return key;
+    }
+  }
+  return null;
+}
+
+function fallbackThemeRegion(theme: string): GeoRegionKey | null {
+  const normalized = theme.toLowerCase();
+  if (normalized.includes("china")) {
+    return "asia";
+  }
+  if (normalized.includes("geopolitical") || normalized.includes("war") || normalized.includes("conflict")) {
+    return "middle_east";
+  }
+  if (normalized.includes("energy")) {
+    return "middle_east";
+  }
+  return null;
+}
+
+function severityWeight(value: string) {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("critical")) {
+    return 1.0;
+  }
+  if (normalized.includes("high")) {
+    return 0.75;
+  }
+  if (normalized.includes("medium")) {
+    return 0.45;
+  }
+  if (normalized.includes("low")) {
+    return 0.2;
+  }
+  return 0.3;
+}
+
+function urgencyWeight(value: string) {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("high") || normalized.includes("immediate")) {
+    return 0.45;
+  }
+  if (normalized.includes("medium")) {
+    return 0.25;
+  }
+  if (normalized.includes("low")) {
+    return 0.1;
+  }
+  return 0.2;
+}
+
+function heatColor(intensity: number) {
+  const t = Math.max(0, Math.min(1, intensity));
+  const r = Math.round(87 + (255 - 87) * t);
+  const g = Math.round(212 + (109 - 212) * t);
+  const b = Math.round(255 + (123 - 255) * t);
+  const a = (0.28 + t * 0.58).toFixed(2);
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
+
+function buildGeoHeatmapScores(regions: WorldAffairsRegionSummary[], events: WorldAffairsEvent[]): GeoRegionHeat[] {
+  const scores = new Map<GeoRegionKey, number>();
+
+  for (const shape of GEO_REGIONS) {
+    scores.set(shape.key, 0);
+  }
+
+  for (const region of regions || []) {
+    const countScore = Math.max(0, region.theme_count || 0) * 0.9;
+    const key = inferGeoRegionKey(region.region, region.headline, region.active_themes.join(" "));
+    if (key) {
+      const current = scores.get(key) || 0;
+      scores.set(key, current + countScore);
+      continue;
+    }
+    const spillover = countScore * 0.12;
+    for (const descriptor of GEO_REGIONS) {
+      scores.set(descriptor.key, (scores.get(descriptor.key) || 0) + spillover);
+    }
+  }
+
+  for (const event of events || []) {
+    const eventScore = severityWeight(event.severity || "") + urgencyWeight(event.urgency || "");
+    const key = inferGeoRegionKey(event.region, event.theme, event.title, event.summary) || fallbackThemeRegion(event.theme);
+    if (key) {
+      const current = scores.get(key) || 0;
+      scores.set(key, current + eventScore);
+      continue;
+    }
+    const spillover = eventScore * 0.15;
+    for (const descriptor of GEO_REGIONS) {
+      scores.set(descriptor.key, (scores.get(descriptor.key) || 0) + spillover);
+    }
+  }
+
+  const maxScore = Math.max(0.001, ...Array.from(scores.values()));
+  return GEO_REGIONS.map((shape) => {
+    const rawScore = scores.get(shape.key) || 0;
+    const intensity = Math.max(0.06, Math.min(1, rawScore / maxScore));
+    return {
+      ...shape,
+      rawScore,
+      intensity,
+      fill: heatColor(intensity),
+    };
+  });
 }
 
 function Sparkline({ values }: { values: number[] }) {
@@ -873,6 +1189,7 @@ function emptyMarketState(): MarketStateSummary {
     trend_strength: "--",
     cross_asset_confirmation: "--",
     summary: "",
+    executive_summary: "",
     drivers: [],
     warnings: [],
     leaders: [],
@@ -995,6 +1312,7 @@ export default function TerminalShell() {
     signals: false,
   });
   const [selectedAlertKey, setSelectedAlertKey] = useState("");
+  const [worldLastUpdatedAt, setWorldLastUpdatedAt] = useState<string>("");
   const aiCacheRef = useRef<Map<string, { expiresAt: number; value: AIAnalyzeResponse }>>(new Map());
   const aiInflightRef = useRef<Map<string, Promise<AIAnalyzeResponse>>>(new Map());
   const aiSignatureRef = useRef({
@@ -1003,6 +1321,7 @@ export default function TerminalShell() {
     world: "",
     signals: "",
   });
+  const activeViewRef = useRef<ViewKey>("monitor");
 
   async function loadCoreData(silent = false) {
     if (!silent) {
@@ -1346,6 +1665,7 @@ export default function TerminalShell() {
         setData((current) =>
           current ? { ...current, worldAffairs, worldRegions, worldBriefing, worldTimeline } : current,
         );
+        setWorldLastUpdatedAt(new Date().toISOString());
       }
 
       if (view === "markets") {
@@ -1426,16 +1746,20 @@ export default function TerminalShell() {
   }
 
   useEffect(() => {
+    activeViewRef.current = activeView;
+  }, [activeView]);
+
+  useEffect(() => {
     void loadCoreData();
     const interval = window.setInterval(() => {
       if (document.hidden) {
         return;
       }
-      const shouldRefreshActiveView = activeView === "monitor";
+      const shouldRefreshActiveView = activeViewRef.current === "monitor";
       void refreshActiveView(shouldRefreshActiveView);
     }, 45000);
     return () => window.clearInterval(interval);
-  }, [activeView]);
+  }, []);
 
   useEffect(() => {
     if (!data) {
@@ -1517,6 +1841,29 @@ export default function TerminalShell() {
     data?.signals?.[0]?.symbol,
     data?.marketState.regime,
   ]);
+
+  useEffect(() => {
+    if (activeView !== "world" || !data || !loadedViews.world) {
+      return;
+    }
+    const refreshWorldData = () => {
+      if (document.hidden) {
+        return;
+      }
+      void loadViewData("world", true);
+    };
+    const interval = window.setInterval(refreshWorldData, 20000);
+    const onVisibilityChange = () => {
+      if (!document.hidden) {
+        refreshWorldData();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [activeView, data, loadedViews.world]);
 
   useEffect(() => {
     const updateClock = () => setClock(new Date().toLocaleTimeString());
@@ -1783,14 +2130,29 @@ export default function TerminalShell() {
     parsedAIBriefing?.riskFlags.length || parsedAIBriefing?.bearCase.length
       ? [...(parsedAIBriefing?.riskFlags || []), ...(parsedAIBriefing?.bearCase || [])]
       : data?.briefing.risks || [],
-    4,
+    8,
   );
   const briefingNextActions = uniqueItems(
     parsedAIBriefing?.nextActions.length
       ? parsedAIBriefing.nextActions
       : data?.briefing.catalyst_calendar || [],
-    3,
+    6,
   );
+  const normalizedChecklist = new Set(briefingChecklist.map((item) => item.toLowerCase()));
+  const normalizedFocus = new Set(briefingFocusItems.map((item) => item.toLowerCase()));
+  const briefingRisksFiltered = briefingRisks
+    .filter((item) => {
+      const key = item.toLowerCase();
+      return !normalizedChecklist.has(key) && !normalizedFocus.has(key);
+    })
+    .slice(0, 4);
+  const normalizedRisks = new Set(briefingRisksFiltered.map((item) => item.toLowerCase()));
+  const briefingNextActionsFiltered = briefingNextActions
+    .filter((item) => {
+      const key = item.toLowerCase();
+      return !normalizedChecklist.has(key) && !normalizedFocus.has(key) && !normalizedRisks.has(key);
+    })
+    .slice(0, 3);
   const briefingOverview =
     parsedAIBriefing?.whatChanged[0] ||
     data?.briefing.overview ||
@@ -1800,6 +2162,12 @@ export default function TerminalShell() {
   const alertInvalidation = pickSectionItems(parsedAlertDrilldown, ["Invalidation Signals"], 3);
   const worldWhatMatters = pickSectionItems(parsedWorldAnalysis, ["Why It Matters Now"], 3);
   const worldFirstOrder = pickSectionItems(parsedWorldAnalysis, ["First-Order Market Effects"], 4);
+  const geoHeatmap = buildGeoHeatmapScores(data?.worldRegions || [], data?.worldAffairs || []);
+  const geoHeatFillByRegion = new Map<GeoRegionKey, string>(geoHeatmap.map((item) => [item.key, item.fill]));
+  const topGeoHotspots = [...geoHeatmap]
+    .sort((a, b) => b.rawScore - a.rawScore)
+    .slice(0, 3)
+    .filter((item) => item.rawScore > 0);
   const signalsDrivers = pickSectionItems(parsedSignalsContext, ["Key Drivers"], 4);
   const signalsChecklist = pickSectionItems(parsedSignalsContext, ["Monitoring Checklist"], 3);
   const currentTimezone = deliveryForm.timezone || data?.delivery?.timezone || "local";
@@ -1934,7 +2302,7 @@ export default function TerminalShell() {
             </div>
             <div className="nt-header-meta">
               <div className="nt-status-line">
-                <span className="nt-signal"><i /> Live model</span>
+                <span className="nt-signal"><i /> Live feed</span>
                 <span className="nt-status-chip">
                   {data ? `Sync ${formatDateTime(data.prediction.timestamp, currentTimezone)}` : <SkeletonBlock width="112px" height="12px" />}
                 </span>
@@ -1954,141 +2322,199 @@ export default function TerminalShell() {
 
           {activeView === "monitor" ? (
             <section className="nt-view nt-overview">
-              <article className="nt-panel nt-hero">
-                <span className="eyebrow">Current Market State</span>
-                <div className="nt-hero-row">
-                  <div>
-                    {bootstrapping ? (
-                      <>
-                        <SkeletonBlock width="180px" height="42px" />
-                        <SkeletonBlock width="88%" height="12px" />
-                        <SkeletonBlock width="74%" height="12px" />
-                      </>
-                    ) : (
-                      <>
-                        <div className="nt-regime">{data?.prediction.regime || "--"}</div>
-                        <p className="nt-hero-copy">{data?.marketState.summary || guide.meaning}</p>
-                      </>
-                    )}
+              {/* First Row: Hero and State Pack */}
+              <div className="nt-overview-main-row">
+                <article className="nt-panel nt-hero">
+                  <span className="eyebrow">Current Market State</span>
+                  <div className="nt-hero-row">
+                    <div>
+                      {bootstrapping ? (
+                        <>
+                          <SkeletonBlock width="180px" height="42px" />
+                          <SkeletonBlock width="88%" height="12px" />
+                          <SkeletonBlock width="74%" height="12px" />
+                        </>
+                      ) : (
+                        <>
+                          <div className="nt-regime">{data?.prediction.regime || "--"}</div>
+                          <p className="nt-hero-copy">{data?.marketState.summary || guide.meaning}</p>
+                        </>
+                      )}
+                    </div>
+                    <div className="nt-confidence">
+                      {bootstrapping ? (
+                        <>
+                          <SkeletonBlock width="84px" height="24px" />
+                          <SkeletonBlock width="72px" height="10px" />
+                        </>
+                      ) : (
+                        <>
+                          <span>{`${Math.round(data?.prediction.confidence ? data.prediction.confidence * 100 : 0)}%`}</span>
+                          <small>confidence</small>
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <div className="nt-confidence">
-                    {bootstrapping ? (
-                      <>
-                        <SkeletonBlock width="84px" height="24px" />
-                        <SkeletonBlock width="72px" height="10px" />
-                      </>
-                    ) : (
-                      <>
-                        <span>{`${Math.round(data?.prediction.confidence ? data.prediction.confidence * 100 : 0)}%`}</span>
-                        <small>confidence</small>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </article>
+                </article>
 
-              <article className="nt-panel nt-state">
-                <span className="eyebrow">State Pack</span>
-                {bootstrapping ? (
-                  <div className="nt-state-grid">
-                    {Array.from({ length: 4 }).map((_, index) => (
-                      <div key={`state-skeleton-${index}`}>
-                        <SkeletonBlock width="54px" height="10px" />
-                        <SkeletonBlock width="82%" height="14px" />
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="nt-state-grid">
-                    <div><span>Breadth</span><strong>{data?.marketState.breadth || "--"}</strong></div>
-                    <div><span>Volatility</span><strong>{data?.marketState.volatility_state || "--"}</strong></div>
-                    <div><span>Trend</span><strong>{data?.marketState.trend_strength || "--"}</strong></div>
-                    <div><span>Confirmation</span><strong>{data?.marketState.cross_asset_confirmation || "--"}</strong></div>
-                  </div>
-                )}
-              </article>
-
-              <article className="nt-panel nt-card">
-                <span className="eyebrow">Probability Ladder</span>
-                <div className="nt-stack">
-                  {Object.entries(data?.prediction.probabilities || {})
-                    .sort((a, b) => b[1] - a[1])
-                    .map(([label, value]) => (
-                      <div className="nt-probability" key={label}>
-                        <div className="nt-row nt-between">
-                          <span>{label}</span>
-                          <strong>{formatPercent(value)}</strong>
+                <article className="nt-panel nt-state">
+                  <span className="eyebrow">State Pack</span>
+                  {bootstrapping ? (
+                    <div className="nt-state-grid">
+                      {Array.from({ length: 4 }).map((_, index) => (
+                        <div key={`state-skeleton-${index}`}>
+                          <SkeletonBlock width="54px" height="10px" />
+                          <SkeletonBlock width="82%" height="14px" />
                         </div>
-                        <div className="nt-probability-bar">
-                        <div style={{ width: `${Math.max(value * 100, 2)}%` }} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="nt-state-grid">
+                      <div><span>Breadth</span><strong>{data?.marketState.breadth || "--"}</strong></div>
+                      <div><span>Volatility</span><strong>{data?.marketState.volatility_state || "--"}</strong></div>
+                      <div><span>Trend</span><strong>{data?.marketState.trend_strength || "--"}</strong></div>
+                      <div><span>Confirmation</span><strong>{data?.marketState.cross_asset_confirmation || "--"}</strong></div>
+                    </div>
+                  )}
+                </article>
+              </div>
+
+              {/* Second Row: Executive Summary */}
+              {data?.marketState.executive_summary ? (
+                <article className="nt-panel nt-card nt-executive-summary">
+                  <span className="eyebrow">Strategic Executive Summary</span>
+                  <div className="nt-copy">
+                    <p className="lead-copy">{data.marketState.executive_summary.replace(/\*\*/g, "")}</p>
+                  </div>
+                </article>
+              ) : null}
+
+              {/* Third Row: Strategic Playbook */}
+              {data?.marketState.playbook ? (
+                <article className="nt-panel nt-card nt-playbook">
+                  <span className="eyebrow">Strategic Playbook: {data.marketState.playbook.title}</span>
+                  <div className="nt-playbook-content">
+                    <div className="nt-playbook-header">
+                      <div className="nt-posture">
+                        <span>Tactical Posture</span>
+                        <strong>{data.marketState.playbook.posture}</strong>
+                      </div>
+                    </div>
+                    <div className="nt-playbook-grid">
+                      <div className="nt-playbook-actions">
+                        <h4>Priority Actions</h4>
+                        <ul className="plain-list">
+                          {data.marketState.playbook.actions.map((action, i) => (
+                            <li key={i}>{action}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="nt-playbook-allocation">
+                        <h4>Model Allocation</h4>
+                        <div className="nt-stack">
+                          {data.marketState.playbook.asset_allocation.map((alloc, i) => (
+                            <div className="nt-list-item" key={i}>
+                              <strong>{alloc.asset}</strong>
+                              <span>{alloc.weight} • {alloc.target}</span>
+                            </div>
+                          ))}
                         </div>
                       </div>
-                    ))}
-                  {!Object.keys(data?.prediction.probabilities || {}).length ? <SkeletonList rows={3} /> : null}
-                </div>
-              </article>
+                    </div>
+                    <div className="nt-playbook-footer">
+                      <p className="nt-watch-point">
+                        <strong>Tactical Watch:</strong> {data.marketState.playbook.tactical_watch}
+                      </p>
+                    </div>
+                  </div>
+                </article>
+              ) : null}
 
-              <article className="nt-panel nt-card">
-                <span className="eyebrow">What Matters Now</span>
-                {bootstrapping ? (
-                  <SkeletonList rows={3} />
-                ) : (
+              <div className="nt-grid-row">
+                <article className="nt-panel nt-card">
+                  <span className="eyebrow">Probability Ladder</span>
                   <div className="nt-stack">
-                    {((overviewIntelUnlocked
-                      ? data?.marketState.what_matters_now
-                      : firstItems(data?.marketState.what_matters_now, 1)
-                    )?.length
-                      ? (overviewIntelUnlocked
-                          ? data?.marketState.what_matters_now
-                          : firstItems(data?.marketState.what_matters_now, 1))
-                      : [data?.marketState.summary || guide.meaning]
-                    ).map((item, index) => (
-                      <div className="nt-list-item" key={`matters-${item}-${index}`}>
-                        <p>{item}</p>
-                      </div>
-                    ))}
+                    {Object.entries(data?.prediction.probabilities || {})
+                      .sort((a, b) => b[1] - a[1])
+                      .map(([label, value]) => (
+                        <div className="nt-probability" key={label}>
+                          <div className="nt-row nt-between">
+                            <span>{label}</span>
+                            <strong>{formatPercent(value)}</strong>
+                          </div>
+                          <div className="nt-probability-bar">
+                          <div style={{ width: `${Math.max(value * 100, 2)}%` }} />
+                          </div>
+                        </div>
+                      ))}
+                    {!Object.keys(data?.prediction.probabilities || {}).length ? <SkeletonList rows={3} /> : null}
                   </div>
-                )}
-              </article>
+                </article>
 
-              <article className="nt-panel nt-card">
-                <span className="eyebrow">How To Read It</span>
-                {bootstrapping ? (
-                  <div className="nt-copy">
-                    <SkeletonBlock width="94%" height="12px" />
-                    <SkeletonBlock width="88%" height="12px" />
-                    <SkeletonBlock width="76%" height="12px" />
-                  </div>
-                ) : (
-                  <div className="nt-copy">
-                    <p>{guide.use}</p>
-                    <p className="muted-copy">{guide.avoid}</p>
-                  </div>
-                )}
-              </article>
+                <article className="nt-panel nt-card">
+                  <span className="eyebrow">What Matters Now</span>
+                  {bootstrapping ? (
+                    <SkeletonList rows={3} />
+                  ) : (
+                    <div className="nt-stack">
+                      {((overviewIntelUnlocked
+                        ? data?.marketState.what_matters_now
+                        : firstItems(data?.marketState.what_matters_now, 1)
+                      )?.length
+                        ? (overviewIntelUnlocked
+                            ? data?.marketState.what_matters_now
+                            : firstItems(data?.marketState.what_matters_now, 1))
+                        : [data?.marketState.summary || guide.meaning]
+                      ).map((item, index) => (
+                        <div className="nt-list-item" key={`matters-${item}-${index}`}>
+                          <p>{item}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </article>
+
+                <article className="nt-panel nt-card">
+                  <span className="eyebrow">How To Read It</span>
+                  {bootstrapping ? (
+                    <div className="nt-copy">
+                      <SkeletonBlock width="94%" height="12px" />
+                      <SkeletonBlock width="88%" height="12px" />
+                      <SkeletonBlock width="76%" height="12px" />
+                    </div>
+                  ) : (
+                    <div className="nt-copy">
+                      <p>{guide.use}</p>
+                      <p className="muted-copy">{guide.avoid}</p>
+                    </div>
+                  )}
+                </article>
+              </div>
 
               {overviewIntelUnlocked ? (
                 <>
-                  <article className="nt-panel nt-card">
-                    <span className="eyebrow">What Changed</span>
-                    <ul className="plain-list">
-                      {(data?.marketState.changes_since_yesterday || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
-                    </ul>
-                  </article>
+                  <div className="nt-grid-row">
+                    <article className="nt-panel nt-card">
+                      <span className="eyebrow">What Changed</span>
+                      <ul className="plain-list">
+                        {(data?.marketState.changes_since_yesterday || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                      </ul>
+                    </article>
 
-                  <article className="nt-panel nt-card">
-                    <span className="eyebrow">Supporting Signals</span>
-                    <ul className="plain-list">
-                      {(data?.marketState.supporting_signals || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
-                    </ul>
-                  </article>
+                    <article className="nt-panel nt-card">
+                      <span className="eyebrow">Supporting Signals</span>
+                      <ul className="plain-list">
+                        {(data?.marketState.supporting_signals || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                      </ul>
+                    </article>
 
-                  <article className="nt-panel nt-card">
-                    <span className="eyebrow">Conflicting Signals</span>
-                    <ul className="plain-list">
-                      {(data?.marketState.conflicting_signals || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
-                    </ul>
-                  </article>
+                    <article className="nt-panel nt-card">
+                      <span className="eyebrow">Conflicting Signals</span>
+                      <ul className="plain-list">
+                        {(data?.marketState.conflicting_signals || []).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                      </ul>
+                    </article>
+                  </div>
 
                   <article className="nt-panel nt-card">
                     <span className="eyebrow">Bull vs Bear</span>
@@ -2119,51 +2545,53 @@ export default function TerminalShell() {
                     )}
                   </article>
 
-                  <article className="nt-panel nt-card">
-                    <span className="eyebrow">Why This Regime</span>
-                    <div className="nt-stack">
-                      {firstItems(data?.marketState.drivers, 4).map((driver) => (
-                        <div className="nt-list-item" key={`${driver.label}-${driver.value}`}>
-                          <strong>{driver.label}</strong>
-                          <span className={toneClass(driver.tone)}>{driver.value}</span>
-                        </div>
-                      ))}
-                      {!data?.marketState.drivers.length ? <SkeletonList rows={3} /> : null}
-                    </div>
-                  </article>
-
-                  <article className="nt-panel nt-card">
-                    <span className="eyebrow">Next Step</span>
-                    <div className="nt-stack">
-                      {(data?.marketState.next_steps || []).map((item, index) => (
-                        <div className="nt-list-item" key={`${item}-${index}`}>
-                          <p>{item}</p>
-                        </div>
-                      ))}
-                      <div className="nt-actions">
-                        <button className="button button-primary" onClick={() => navigateToView("signals")} type="button">
-                          Open Watchlist Context
-                        </button>
-                        <button className="button" onClick={() => navigateToView(hasTierAccess(currentTier, "pro") ? "world" : "system")} type="button">
-                          {hasTierAccess(currentTier, "pro") ? "Open World Affairs" : "Unlock Deeper Intel"}
-                        </button>
+                  <div className="nt-grid-row">
+                    <article className="nt-panel nt-card">
+                      <span className="eyebrow">Why This Regime</span>
+                      <div className="nt-stack">
+                        {firstItems(data?.marketState.drivers, 4).map((driver) => (
+                          <div className="nt-list-item" key={`${driver.label}-${driver.value}`}>
+                            <strong>{driver.label}</strong>
+                            <span className={toneClass(driver.tone)}>{driver.value}</span>
+                          </div>
+                        ))}
+                        {!data?.marketState.drivers.length ? <SkeletonList rows={3} /> : null}
                       </div>
-                    </div>
-                  </article>
+                    </article>
 
-                  <article className="nt-panel nt-card">
-                    <span className="eyebrow">Transition History</span>
-                    <div className="nt-stack">
-                      {(data?.transitions || []).map((item) => (
-                        <div className="nt-list-item" key={`${item.regime}-${item.started_at}`}>
-                          <strong>{item.regime}</strong>
-                          <span>{item.started_at} to {item.ended_at}</span>
-                          <span>{item.duration_days}d / {Math.round(item.average_confidence * 100)}%</span>
+                    <article className="nt-panel nt-card">
+                      <span className="eyebrow">Next Step</span>
+                      <div className="nt-stack">
+                        {(data?.marketState.next_steps || []).map((item, index) => (
+                          <div className="nt-list-item" key={`${item}-${index}`}>
+                            <p>{item}</p>
+                          </div>
+                        ))}
+                        <div className="nt-actions">
+                          <button className="button button-primary" onClick={() => navigateToView("signals")} type="button">
+                            Open Watchlist Context
+                          </button>
+                          <button className="button" onClick={() => navigateToView(hasTierAccess(currentTier, "pro") ? "world" : "system")} type="button">
+                            {hasTierAccess(currentTier, "pro") ? "Open World Affairs" : "Unlock Deeper Intel"}
+                          </button>
                         </div>
-                      ))}
-                      {!data?.transitions.length ? <SkeletonList rows={3} /> : null}
-                    </div>
-                  </article>
+                      </div>
+                    </article>
+
+                    <article className="nt-panel nt-card">
+                      <span className="eyebrow">Transition History</span>
+                      <div className="nt-stack">
+                        {(data?.transitions || []).map((item) => (
+                          <div className="nt-list-item" key={`${item.regime}-${item.started_at}`}>
+                            <strong>{item.regime}</strong>
+                            <span>{item.started_at} to {item.ended_at}</span>
+                            <span>{item.duration_days}d / {Math.round(item.average_confidence * 100)}%</span>
+                          </div>
+                        ))}
+                        {!data?.transitions.length ? <SkeletonList rows={3} /> : null}
+                      </div>
+                    </article>
+                  </div>
 
                   <article className="nt-panel nt-card">
                     <span className="eyebrow">Leaders / Laggards</span>
@@ -2203,82 +2631,84 @@ export default function TerminalShell() {
                     </div>
                   </article>
 
-                  <article className="nt-panel nt-card">
-                    <span className="eyebrow">Alerts</span>
-                    <div className="nt-stack">
-                      {firstItems(data?.alerts, 4).map((alert) => (
+                  <div className="nt-grid-row">
+                    <article className="nt-panel nt-card">
+                      <span className="eyebrow">Alerts</span>
+                      <div className="nt-stack">
+                        {firstItems(data?.alerts, 4).map((alert) => (
+                          <button
+                            className={`nt-alert ${alert.severity} ${selectedAlertKey === `${alert.title}::${alert.message}` ? "is-active" : ""}`}
+                            key={`${alert.title}-${alert.message}`}
+                            onClick={() => setSelectedAlertKey(`${alert.title}::${alert.message}`)}
+                            type="button"
+                          >
+                            <strong>{alert.title}</strong>
+                            <p>{alert.message}</p>
+                          </button>
+                        ))}
+                        {monitorHydrating && !data?.alerts.length ? <SkeletonList rows={3} /> : null}
+                      </div>
+                    </article>
+
+                    <article className="nt-panel nt-card">
+                      <span className="eyebrow">AI Alert Drilldown</span>
+                      <div className="nt-actions">
                         <button
-                          className={`nt-alert ${alert.severity} ${selectedAlertKey === `${alert.title}::${alert.message}` ? "is-active" : ""}`}
-                          key={`${alert.title}-${alert.message}`}
-                          onClick={() => setSelectedAlertKey(`${alert.title}::${alert.message}`)}
+                          className="button button-small"
+                          disabled={aiLoading.alert || !data?.alerts?.length}
+                          onClick={() => void handleGenerateAlertAI()}
                           type="button"
                         >
-                          <strong>{alert.title}</strong>
-                          <p>{alert.message}</p>
+                          {aiLoading.alert ? "Generating..." : "Generate AI Drilldown"}
                         </button>
-                      ))}
-                      {monitorHydrating && !data?.alerts.length ? <SkeletonList rows={3} /> : null}
-                    </div>
-                  </article>
-
-              <article className="nt-panel nt-card">
-                <span className="eyebrow">AI Alert Drilldown</span>
-                <div className="nt-actions">
-                  <button
-                    className="button button-small"
-                    disabled={aiLoading.alert || !data?.alerts?.length}
-                    onClick={() => void handleGenerateAlertAI()}
-                    type="button"
-                  >
-                    {aiLoading.alert ? "Generating..." : "Generate AI Drilldown"}
-                  </button>
-                </div>
-                {monitorHydrating ? (
-                  <SkeletonList rows={3} />
-                ) : aiAlertDrilldown?.content ? (
-                  <div className="nt-stack">
-                    <div className="nt-list-item">
-                      <strong>Trigger Drivers</strong>
-                      <ul className="plain-list">
-                        {alertDrivers.length ? alertDrivers.map((item, index) => <li key={`alert-driver-${index}`}>{item}</li>) : <li>--</li>}
-                      </ul>
-                    </div>
-                    <div className="nt-list-item">
-                      <strong>Support / Conflict</strong>
-                      <ul className="plain-list">
-                        {alertConflicts.length ? alertConflicts.map((item, index) => <li key={`alert-conflict-${index}`}>{item}</li>) : <li>--</li>}
-                      </ul>
-                    </div>
-                    <div className="nt-list-item">
-                      <strong>Invalidation</strong>
-                      <ul className="plain-list">
-                        {alertInvalidation.length ? alertInvalidation.map((item, index) => <li key={`alert-invalidation-${index}`}>{item}</li>) : <li>--</li>}
-                      </ul>
-                    </div>
-                  </div>
-                ) : (
-                      <p className="muted-copy">No AI drilldown available for current alerts.</p>
-                    )}
-                  </article>
-
-                  <article className="nt-panel nt-card">
-                    <span className="eyebrow">Sector Breadth</span>
-                    <div className="nt-stack">
-                      {firstItems(data?.sectors, 6).map((sector) => (
-                        <div className="nt-symbol" key={sector.symbol}>
-                          <div>
-                            <strong>{sector.symbol}</strong>
-                            <span>{sector.label}</span>
+                      </div>
+                      {monitorHydrating ? (
+                        <SkeletonList rows={3} />
+                      ) : aiAlertDrilldown?.content ? (
+                        <div className="nt-stack">
+                          <div className="nt-list-item">
+                            <strong>Trigger Drivers</strong>
+                            <ul className="plain-list">
+                              {alertDrivers.length ? alertDrivers.map((item, index) => <li key={`alert-driver-${index}`}>{item}</li>) : <li>--</li>}
+                            </ul>
                           </div>
-                          <div>
-                            <span>{sector.signal}</span>
-                            <strong className={metricClass(sector.change_1d)}>{formatPercent(sector.change_1d)}</strong>
+                          <div className="nt-list-item">
+                            <strong>Support / Conflict</strong>
+                            <ul className="plain-list">
+                              {alertConflicts.length ? alertConflicts.map((item, index) => <li key={`alert-conflict-${index}`}>{item}</li>) : <li>--</li>}
+                            </ul>
+                          </div>
+                          <div className="nt-list-item">
+                            <strong>Invalidation</strong>
+                            <ul className="plain-list">
+                              {alertInvalidation.length ? alertInvalidation.map((item, index) => <li key={`alert-invalidation-${index}`}>{item}</li>) : <li>--</li>}
+                            </ul>
                           </div>
                         </div>
-                      ))}
-                      {!data?.sectors.length ? <SkeletonSymbolList rows={4} /> : null}
-                    </div>
-                  </article>
+                      ) : (
+                            <p className="muted-copy">No AI drilldown available for current alerts.</p>
+                          )}
+                    </article>
+
+                    <article className="nt-panel nt-card">
+                      <span className="eyebrow">Sector Breadth</span>
+                      <div className="nt-stack">
+                        {firstItems(data?.sectors, 6).map((sector) => (
+                          <div className="nt-symbol" key={sector.symbol}>
+                            <div>
+                              <strong>{sector.symbol}</strong>
+                              <span>{sector.label}</span>
+                            </div>
+                            <div>
+                              <span>{sector.signal}</span>
+                              <strong className={metricClass(sector.change_1d)}>{formatPercent(sector.change_1d)}</strong>
+                            </div>
+                          </div>
+                        ))}
+                        {!data?.sectors.length ? <SkeletonSymbolList rows={4} /> : null}
+                      </div>
+                    </article>
+                  </div>
                 </>
               ) : (
                 <article className="nt-panel nt-card">
@@ -2356,17 +2786,17 @@ export default function TerminalShell() {
               <article className="nt-panel nt-card">
                 <span className="eyebrow">Risks</span>
                 <ul className="plain-list">
-                  {briefingRisks.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                  {briefingRisksFiltered.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
                 </ul>
-                {briefingHydrating && !briefingRisks.length ? <SkeletonList rows={3} /> : null}
+                {briefingHydrating && !briefingRisksFiltered.length ? <SkeletonList rows={3} /> : null}
               </article>
 
               <article className="nt-panel nt-card">
                 <span className="eyebrow">Session Catalysts</span>
                 <ul className="plain-list">
-                  {briefingNextActions.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                  {briefingNextActionsFiltered.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
                 </ul>
-                {briefingHydrating && !briefingNextActions.length ? <SkeletonList rows={3} /> : null}
+                {briefingHydrating && !briefingNextActionsFiltered.length ? <SkeletonList rows={3} /> : null}
               </article>
 
               <article className="nt-panel nt-card">
@@ -2496,6 +2926,70 @@ export default function TerminalShell() {
                 </div>
               </article>
 
+              <article className="nt-panel nt-card nt-world-heatmap-card">
+                <div className="nt-world-map-header">
+                  <span className="eyebrow">Geopolitical Heatmap</span>
+                  <span className="nt-world-map-live">
+                    Live {worldLastUpdatedAt ? `• Updated ${formatDateTime(worldLastUpdatedAt, currentTimezone)}` : ""}
+                  </span>
+                </div>
+                <div className="nt-world-map-wrap">
+                  <svg className="nt-world-map" viewBox="0 0 520 280" role="img" aria-label="Global event intensity heatmap">
+                    <rect x="1" y="1" width="518" height="278" className="nt-world-map-frame" />
+                    <path d={WORLD_MAP.graticulePath} className="nt-world-map-grid" />
+                    {WORLD_MAP.countryPaths.map((country) => {
+                      return (
+                        <path
+                          key={`geo-country-${country.id}`}
+                          d={country.path}
+                          fill={geoHeatFillByRegion.get(country.region) || "rgba(87, 212, 255, 0.16)"}
+                          className="nt-world-map-region"
+                        />
+                      );
+                    })}
+                    {topGeoHotspots.map((item, index) => {
+                      const radius = 10 + item.intensity * 16;
+                      return (
+                        <g key={`geo-hotspot-ring-${item.key}`}>
+                          <circle
+                            cx={item.center[0]}
+                            cy={item.center[1]}
+                            r={radius}
+                            className="nt-world-map-hotspot-ring"
+                            style={{ animationDelay: `${index * 220}ms` }}
+                          />
+                          <circle
+                            cx={item.center[0]}
+                            cy={item.center[1]}
+                            r="2.4"
+                            className="nt-world-map-hotspot-core"
+                          />
+                        </g>
+                      );
+                    })}
+                    {geoHeatmap.map((region) => (
+                      <g key={region.key}>
+                        <text x={region.center[0]} y={region.center[1]} className="nt-world-map-label">
+                          {region.label}
+                        </text>
+                      </g>
+                    ))}
+                  </svg>
+                </div>
+                <ul className="plain-list">
+                  {(topGeoHotspots.length ? topGeoHotspots : geoHeatmap.slice(0, 3)).map((item) => (
+                    <li key={`geo-hotspot-${item.key}`}>
+                      {item.label}: intensity {(item.intensity * 100).toFixed(0)}%
+                    </li>
+                  ))}
+                </ul>
+                <div className="nt-world-map-legend">
+                  <span>Low</span>
+                  <div className="nt-world-map-gradient" />
+                  <span>High</span>
+                </div>
+              </article>
+
               <article className="nt-panel nt-card nt-settings-wide">
                 <span className="eyebrow">Narrative Timeline</span>
                 <div className="nt-stack">
@@ -2520,9 +3014,12 @@ export default function TerminalShell() {
                     <a className="nt-news-item" href={event.url} rel="noreferrer" target="_blank">
                       <strong>{event.title}</strong>
                       <span>{event.source} • {formatDateTime(event.published_at, currentTimezone)} • {event.urgency} / {event.severity}</span>
+                      <div className="nt-impact-row">
+                        <span className={`nt-sentiment ${event.sentiment.toLowerCase()}`}>{event.sentiment} Sentiment</span>
+                        <span className="nt-bias">{event.directional_bias}</span>
+                      </div>
                       <p>{event.summary || event.why_it_matters}</p>
-                    </a>
-                    <div className="nt-copy">
+                    </a>                    <div className="nt-copy">
                       <p><strong>Why it matters:</strong> {event.why_it_matters}</p>
                       <p><strong>Affected assets:</strong> {event.affected_assets.join(", ")}</p>
                     </div>
@@ -2704,11 +3201,16 @@ export default function TerminalShell() {
                     <div className="nt-list-item" key={`${item.symbol}-${item.sensitivity}`}>
                       <strong>{item.symbol} • {item.sensitivity} sensitivity</strong>
                       <span>{item.label}</span>
+                      {item.sentiment && (
+                        <div className="nt-impact-row nt-mini">
+                          <span className={`nt-sentiment ${item.sentiment.toLowerCase()}`}>{item.sentiment}</span>
+                          <span className="nt-bias">{item.directional_bias}</span>
+                        </div>
+                      )}
                       <p>Themes: {item.themes.join(", ")}</p>
                       <p>Links: {item.market_links.join(", ")}</p>
                     </div>
-                  ))}
-                  {signalsHydrating && !data?.watchlistExposures.length ? <SkeletonList rows={4} /> : null}
+                  ))}                  {signalsHydrating && !data?.watchlistExposures.length ? <SkeletonList rows={4} /> : null}
                 </div>
               </article>
 

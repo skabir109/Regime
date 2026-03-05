@@ -128,6 +128,24 @@ THEME_RULES = [
     },
 ]
 
+NOISE_BLOCKERS = [
+    "earnings call transcript",
+    "transcript",
+    "prepared remarks",
+    "q&a",
+    "operator:",
+]
+
+CONFLICT_STRONG_KEYWORDS = {
+    "war",
+    "missile",
+    "attack",
+    "military",
+    "drone",
+    "invasion",
+    "troop",
+}
+
 
 WATCHLIST_EXPOSURES = {
     "NVDA": {"sensitivity": "High", "themes": ["Trade & Protectionism", "China Economy", "Crypto & Digital Assets"], "market_links": ["Semiconductors", "Export Controls", "AI Capex"]},
@@ -149,9 +167,37 @@ WATCHLIST_EXPOSURES = {
 
 def _match_theme(text: str) -> dict:
     lowered = text.lower()
+    if any(blocker in lowered for blocker in NOISE_BLOCKERS):
+        return {
+            "theme": "Macro Crosscurrents",
+            "region": "Global",
+            "urgency": "low",
+            "severity": "low",
+            "affected_assets": ["Equities", "Rates", "USD"],
+            "market_view": [
+                "Low-conviction headline; monitor for confirmation from higher-quality macro sources.",
+            ],
+            "second_order_effects": [
+                "Avoid overreacting to single-source transcript noise.",
+            ],
+            "why": "Transcript-style coverage often contains low signal for broad macro regime shifts.",
+        }
+
+    best_rule = None
+    best_score = 0
     for rule in THEME_RULES:
-        if any(keyword in lowered for keyword in rule["keywords"]):
-            return rule
+        score = sum(1 for keyword in rule["keywords"] if keyword in lowered)
+        if rule["theme"] == "Geopolitical Conflict":
+            strong_hits = sum(1 for keyword in CONFLICT_STRONG_KEYWORDS if keyword in lowered)
+            if strong_hits == 0:
+                continue
+            score += strong_hits
+        if score > best_score:
+            best_score = score
+            best_rule = rule
+
+    if best_rule and best_score > 0:
+        return best_rule
     return {
         "theme": "Macro Crosscurrents",
         "region": "Global",
@@ -225,7 +271,13 @@ def classify_world_affairs_event(item: dict) -> dict:
 
 def build_world_affairs_monitor(limit: int = 8) -> list[dict]:
     items = fetch_market_news(limit=max(limit * 2, 10))
-    events = [classify_world_affairs_event(item) for item in items]
+    filtered = []
+    for item in items:
+        title = str(item.get("title", "")).lower()
+        if any(blocker in title for blocker in NOISE_BLOCKERS):
+            continue
+        filtered.append(item)
+    events = [classify_world_affairs_event(item) for item in filtered]
     urgency_rank = {"high": 0, "medium": 1, "low": 2}
     severity_rank = {"high": 0, "medium": 1, "low": 2}
     events.sort(

@@ -1,5 +1,6 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+import html
 import re
 from urllib.error import URLError
 from urllib.parse import urlparse
@@ -15,7 +16,41 @@ NEWS_FEEDS = [
     ("Nasdaq Market Activity", "https://www.nasdaq.com/feed/rssoutbound?category=Market%20Activity"),
     ("Investing.com Markets", "https://www.investing.com/rss/news_25.rss"),
     ("Yahoo Finance", "https://finance.yahoo.com/news/rssindex"),
+    ("BBC Business", "https://feeds.bbci.co.uk/news/business/rss.xml"),
+    ("NYTimes Business", "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"),
+    ("NYTimes World", "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"),
 ]
+
+SOURCE_RELIABILITY = {
+    "reuters business": 1.00,
+    "reuters world": 1.00,
+    "ap business": 0.98,
+    "ap world": 0.98,
+    "marketwatch top stories": 0.90,
+    "nytimes business": 0.90,
+    "nytimes world": 0.90,
+    "bbc business": 0.88,
+    "nasdaq market activity": 0.85,
+    "cnbc markets": 0.82,
+    "yahoo finance": 0.78,
+    "investing.com markets": 0.74,
+}
+
+TAG_URGENCY_WEIGHT = {
+    "Geopolitics": 0.20,
+    "Volatility": 0.18,
+    "Rates": 0.14,
+    "Energy": 0.12,
+    "Earnings": 0.08,
+    "AI": 0.07,
+    "Macro": 0.03,
+}
+
+TITLE_STOPWORDS = {
+    "the", "a", "an", "to", "for", "of", "and", "in", "on", "at", "as", "with", "from", "by",
+    "after", "before", "over", "under", "amid", "into", "about", "new", "says", "say", "us",
+    "u", "s", "market", "markets",
+}
 
 FALLBACK_NEWS = [
     {
@@ -71,11 +106,54 @@ def _parse_timestamp_for_sort(value: str) -> datetime:
         return floor
 
 
+def _clamp_future_timestamp(timestamp: datetime, now_utc: datetime) -> datetime:
+    floor = datetime.min.replace(tzinfo=timezone.utc)
+    if timestamp == floor:
+        return timestamp
+    max_allowed = now_utc.replace(microsecond=0) + timedelta(minutes=10)
+    if timestamp > max_allowed:
+        return max_allowed
+    return timestamp
+
+
 def _normalize_title(value: str) -> str:
     lowered = value.lower().strip()
     lowered = re.sub(r"\s+", " ", lowered)
     lowered = re.sub(r"[^a-z0-9 ]", "", lowered)
     return lowered
+
+
+def _headline_tokens(title: str) -> list[str]:
+    normalized = _normalize_title(title)
+    tokens = [token for token in normalized.split(" ") if token and token not in TITLE_STOPWORDS and len(token) > 2]
+    return tokens[:12]
+
+
+def _headline_signature(title: str) -> str:
+    return " ".join(_headline_tokens(title))
+
+
+def _signature_overlap(left: str, right: str) -> float:
+    if not left or not right:
+        return 0.0
+    left_set = set(left.split(" "))
+    right_set = set(right.split(" "))
+    if not left_set or not right_set:
+        return 0.0
+    inter = len(left_set.intersection(right_set))
+    union = len(left_set.union(right_set))
+    return inter / union if union else 0.0
+
+
+def _find_cluster_signature(signature: str, existing_signatures: list[str]) -> str | None:
+    if not signature:
+        return None
+    if signature in existing_signatures:
+        return signature
+    for candidate in existing_signatures:
+        if _signature_overlap(signature, candidate) >= 0.84:
+            return candidate
+    return None
 
 
 def _source_key(source: str, url: str) -> str:
@@ -90,6 +168,46 @@ def _source_key(source: str, url: str) -> str:
 
 def _safe_text(value: str | None) -> str:
     return (value or "").strip()
+
+
+def _clean_description(value: str | None) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    cleaned = html.unescape(raw)
+    # Remove CSS/script blocks and HTML tags that leak into RSS descriptions.
+    cleaned = re.sub(r"(?is)<style.*?>.*?</style>", " ", cleaned)
+    cleaned = re.sub(r"(?is)<script.*?>.*?</script>", " ", cleaned)
+    cleaned = re.sub(r"@media\s*\([^)]*\)\s*\{[^{}]*\}", " ", cleaned)
+    cleaned = re.sub(r"(?is)<[^>]+>", " ", cleaned)
+    cleaned = re.sub(r"(?i)\bimage source\s*:[^.;\n]+", " ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if len(cleaned) > 420:
+        cleaned = cleaned[:417].rstrip() + "..."
+    return cleaned
+
+
+def _recency_weight(timestamp: datetime, now_utc: datetime) -> float:
+    if timestamp == datetime.min.replace(tzinfo=timezone.utc):
+        return 0.0
+    age_hours = max(0.0, (now_utc - timestamp).total_seconds() / 3600.0)
+    # Fast decay after 24h, but still retain some value through 3 days.
+    if age_hours <= 24:
+        return 1.0 - (age_hours / 24.0) * 0.40
+    if age_hours <= 72:
+        return 0.60 - ((age_hours - 24) / 48.0) * 0.45
+    return 0.10
+
+
+def _article_score(article: dict, now_utc: datetime) -> float:
+    source_name = str(article.get("source", "")).lower()
+    source_weight = SOURCE_RELIABILITY.get(source_name, 0.70)
+    recency = _recency_weight(article.get("_ts", datetime.min.replace(tzinfo=timezone.utc)), now_utc)
+    tags = article.get("tags", []) or []
+    urgency = max((TAG_URGENCY_WEIGHT.get(tag, 0.02) for tag in tags), default=0.02)
+    source_count = int(article.get("_source_count", 1))
+    confirmation_boost = min(0.25, max(0, source_count - 1) * 0.05)
+    return (source_weight * 1.4) + (recency * 1.2) + urgency + confirmation_boost
 
 
 def classify_news_tags(title: str, summary: str | None = None) -> list[str]:
@@ -168,9 +286,12 @@ def build_watchlist_news(items: list[dict], watchlist: list[dict], limit: int = 
 
 
 def fetch_market_news(limit: int = 8) -> list[dict]:
-    all_items = []
+    all_items: list[dict] = []
     seen_titles = set()
+    cluster_index: dict[str, int] = {}
+    cluster_signatures: list[str] = []
     per_source_cap = max(4, min(limit * 2, 14))
+    now_utc = datetime.now(timezone.utc)
 
     for source_name, feed_url in NEWS_FEEDS:
         source_added = 0
@@ -193,25 +314,44 @@ def fetch_market_news(limit: int = 8) -> list[dict]:
             title = _safe_text(item.findtext("title"))
             link = _safe_text(item.findtext("link"))
             pub_date = _parse_pubdate(item.findtext("pubDate"))
-            summary = _safe_text(item.findtext("description"))
+            summary = _clean_description(item.findtext("description"))
             title_key = _normalize_title(title)
+            signature = _headline_signature(title)
 
             if not title or title_key in seen_titles:
                 continue
 
             seen_titles.add(title_key)
-            all_items.append(
-                {
-                    "title": title,
-                    "source": source_name,
-                    "published_at": pub_date,
-                    "url": link,
-                    "summary": summary or None,
-                    "tags": classify_news_tags(title, summary),
-                    "_source_key": _source_key(source_name, link),
-                    "_ts": _parse_timestamp_for_sort(pub_date),
-                }
-            )
+            cluster_sig = _find_cluster_signature(signature, cluster_signatures)
+            candidate_ts = _clamp_future_timestamp(_parse_timestamp_for_sort(pub_date), now_utc)
+            if cluster_sig and cluster_sig in cluster_index:
+                idx = cluster_index[cluster_sig]
+                canonical = all_items[idx]
+                canonical["_source_cluster"].add(source_name)
+                canonical["_source_count"] = len(canonical["_source_cluster"])
+                # Prefer fresher headline/summary timing for the cluster representative.
+                if candidate_ts > canonical.get("_ts", datetime.min.replace(tzinfo=timezone.utc)):
+                    canonical["published_at"] = candidate_ts.isoformat()
+                    canonical["_ts"] = candidate_ts
+                continue
+
+            article = {
+                "title": title,
+                "source": source_name,
+                "published_at": candidate_ts.isoformat(),
+                "url": link,
+                "summary": summary or None,
+                "tags": classify_news_tags(title, summary),
+                "_source_key": _source_key(source_name, link),
+                "_ts": candidate_ts,
+                "_signature": signature,
+                "_source_cluster": {source_name},
+                "_source_count": 1,
+            }
+            all_items.append(article)
+            if signature:
+                cluster_index[signature] = len(all_items) - 1
+                cluster_signatures.append(signature)
             source_added += 1
 
             if source_added >= per_source_cap:
@@ -220,10 +360,17 @@ def fetch_market_news(limit: int = 8) -> list[dict]:
     if not all_items:
         return FALLBACK_NEWS
 
-    # Most recent first.
+    for article in all_items:
+        article["_score"] = _article_score(article, now_utc)
+
+    # Rank by reliability/urgency/recency score, then timestamp.
     ranked = sorted(
         all_items,
-        key=lambda item: (item.get("_ts", datetime.min.replace(tzinfo=timezone.utc)), item.get("title", "")),
+        key=lambda item: (
+            float(item.get("_score", 0.0)),
+            item.get("_ts", datetime.min.replace(tzinfo=timezone.utc)),
+            item.get("title", ""),
+        ),
         reverse=True,
     )
 
@@ -255,5 +402,9 @@ def fetch_market_news(limit: int = 8) -> list[dict]:
     for article in selected:
         article.pop("_source_key", None)
         article.pop("_ts", None)
+        article.pop("_signature", None)
+        article.pop("_source_cluster", None)
+        article.pop("_source_count", None)
+        article.pop("_score", None)
 
     return selected
