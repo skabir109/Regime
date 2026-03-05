@@ -1721,7 +1721,8 @@ select.nt-select:hover {
   min-height: 0;
   display: grid;
   gap: 10px;
-  overflow: visible;
+  overflow: hidden;
+  isolation: isolate;
 }
 
 .nt-world-map-header {
@@ -1729,6 +1730,7 @@ select.nt-select:hover {
   align-items: baseline;
   justify-content: space-between;
   gap: 10px;
+  min-width: 0;
 }
 
 .nt-world-map-live {
@@ -1736,7 +1738,9 @@ select.nt-select:hover {
   font-size: 0.72rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  white-space: nowrap;
+  white-space: normal;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .nt-world-map-wrap {
@@ -1746,14 +1750,18 @@ select.nt-select:hover {
     rgba(255, 255, 255, 0.02);
   padding: 10px;
   position: relative;
-  overflow: visible;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .nt-world-map {
-  width: 100%;
+  width: min(100%, 980px);
+  max-width: 100%;
   height: auto;
   display: block;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .nt-world-map-frame {
@@ -1818,8 +1826,8 @@ select.nt-select:hover {
 }
 
 .nt-world-map-tooltip {
-  position: absolute;
-  z-index: 5;
+  position: fixed;
+  z-index: 999;
   display: grid;
   gap: 2px;
   min-width: 180px;
@@ -1831,6 +1839,15 @@ select.nt-select:hover {
   font-size: 0.72rem;
   line-height: 1.35;
   pointer-events: none;
+}
+
+.nt-world-heatmap-card .plain-list {
+  margin: 0;
+  overflow: hidden;
+}
+
+.nt-world-heatmap-card .plain-list li {
+  overflow-wrap: anywhere;
 }
 
 .nt-world-map-gradient {
@@ -1987,6 +2004,7 @@ select.nt-select:hover {
 
   .nt-world-map-live {
     font-size: 0.68rem;
+    text-align: left;
   }
 
   .nt-world-map-label {

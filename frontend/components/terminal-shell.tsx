@@ -915,7 +915,7 @@ function buildWorldMapPaths() {
     features: Array<{ id?: string | number; properties?: { name?: string } }>;
   };
 
-  const projection = geoNaturalEarth1().fitExtent([[12, 12], [508, 268]], countries as never);
+  const projection = geoNaturalEarth1().fitExtent([[24, 18], [496, 262]], countries as never);
   const pathGenerator = geoPath(projection);
   const graticulePath = pathGenerator(geoGraticule10()) || "";
 
@@ -1472,8 +1472,8 @@ export default function TerminalShell() {
   const [worldLastUpdatedAt, setWorldLastUpdatedAt] = useState<string>("");
   const [worldSocketConnected, setWorldSocketConnected] = useState(false);
   const [hoveredCountry, setHoveredCountry] = useState<{
-    x: number;
-    y: number;
+    screenX: number;
+    screenY: number;
     name: string;
     region: string;
     intensity: number;
@@ -3179,7 +3179,13 @@ export default function TerminalShell() {
                   </span>
                 </div>
                 <div className="nt-world-map-wrap">
-                  <svg className="nt-world-map" viewBox="0 0 520 280" role="img" aria-label="Global event intensity heatmap">
+                  <svg
+                    className="nt-world-map"
+                    viewBox="0 0 520 280"
+                    preserveAspectRatio="xMidYMid meet"
+                    role="img"
+                    aria-label="Global event intensity heatmap"
+                  >
                     <rect x="1" y="1" width="518" height="278" className="nt-world-map-frame" />
                     <path d={WORLD_MAP.graticulePath} className="nt-world-map-grid" />
                     {WORLD_MAP.countryPaths.map((country) => {
@@ -3191,13 +3197,12 @@ export default function TerminalShell() {
                           fill={countryPoint?.fill || "rgba(87, 212, 255, 0.16)"}
                           className="nt-world-map-region"
                           onMouseEnter={(event) => {
-                            const svgRect = event.currentTarget.ownerSVGElement?.getBoundingClientRect();
-                            if (!svgRect || !countryPoint) {
+                            if (!countryPoint) {
                               return;
                             }
                             setHoveredCountry({
-                              x: event.clientX - svgRect.left + 12,
-                              y: event.clientY - svgRect.top + 12,
+                              screenX: event.clientX,
+                              screenY: event.clientY,
                               name: countryPoint.name,
                               region: GEO_REGIONS.find((item) => item.key === countryPoint.region)?.label || countryPoint.region,
                               intensity: countryPoint.intensity,
@@ -3209,8 +3214,8 @@ export default function TerminalShell() {
                               current
                                 ? {
                                     ...current,
-                                    x: event.nativeEvent.offsetX + 12,
-                                    y: event.nativeEvent.offsetY + 12,
+                                    screenX: event.clientX,
+                                    screenY: event.clientY,
                                   }
                                 : current,
                             );
@@ -3220,7 +3225,7 @@ export default function TerminalShell() {
                       );
                     })}
                     {topGeoHotspots.map((item, index) => {
-                      const radius = 10 + item.intensity * 16;
+                      const radius = 8 + item.intensity * 11;
                       return (
                         <g key={`geo-hotspot-ring-${item.key}`}>
                           <circle
@@ -3233,7 +3238,7 @@ export default function TerminalShell() {
                           <circle
                             cx={item.center[0]}
                             cy={item.center[1]}
-                            r="2.4"
+                            r="2"
                             className="nt-world-map-hotspot-core"
                           />
                         </g>
@@ -3251,8 +3256,16 @@ export default function TerminalShell() {
                     <div
                       className="nt-world-map-tooltip"
                       style={{
-                        left: `${Math.min(420, hoveredCountry.x)}px`,
-                        top: `${Math.min(232, hoveredCountry.y)}px`,
+                        left: `${
+                          typeof window === "undefined"
+                            ? hoveredCountry.screenX + 14
+                            : Math.min(window.innerWidth - 280, hoveredCountry.screenX + 14)
+                        }px`,
+                        top: `${
+                          typeof window === "undefined"
+                            ? hoveredCountry.screenY + 14
+                            : Math.min(window.innerHeight - 120, hoveredCountry.screenY + 14)
+                        }px`,
                       }}
                     >
                       <strong>{hoveredCountry.name}</strong>

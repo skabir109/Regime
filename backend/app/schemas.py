@@ -69,8 +69,10 @@ class DeliveryPreferencesDB(SQLModel, table=True):
     email_enabled: bool = SQLField(default=False)
     webhook_enabled: bool = SQLField(default=False)
     webhook_url: Optional[str] = None
+    slack_enabled: bool = SQLField(default=False)
+    slack_webhook_url: Optional[str] = None
     cadence: str = SQLField(default="premarket")
-    timezone: str = SQLField(default="local")
+    updated_at: datetime = SQLField(default_factory=datetime.utcnow)
     updated_at: datetime = SQLField(default_factory=datetime.utcnow)
 
     user: User = Relationship(back_populates="delivery_preferences")
