@@ -68,6 +68,22 @@ def _run_lightweight_migrations(engine) -> None:
 
     delivery_existing = {column["name"] for column in inspector.get_columns("delivery_preferences")}
     delivery_statements: list[str] = []
+    if "slack_enabled" not in delivery_existing:
+        delivery_statements.append(
+            "ALTER TABLE delivery_preferences ADD COLUMN slack_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+        )
+    if "slack_webhook_url" not in delivery_existing:
+        delivery_statements.append(
+            "ALTER TABLE delivery_preferences ADD COLUMN slack_webhook_url VARCHAR(512) NULL"
+        )
+    if "discord_enabled" not in delivery_existing:
+        delivery_statements.append(
+            "ALTER TABLE delivery_preferences ADD COLUMN discord_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+        )
+    if "discord_webhook_url" not in delivery_existing:
+        delivery_statements.append(
+            "ALTER TABLE delivery_preferences ADD COLUMN discord_webhook_url VARCHAR(512) NULL"
+        )
     if "timezone" not in delivery_existing:
         delivery_statements.append(
             "ALTER TABLE delivery_preferences ADD COLUMN timezone VARCHAR(64) NOT NULL DEFAULT 'local'"

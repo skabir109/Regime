@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 
 type AuthMode = "login" | "register";
@@ -39,12 +40,25 @@ async function supabaseAuthRequest<T>(path: string, payload: Record<string, unkn
 }
 
 export default function LoginPage() {
+  const router = useRouter();
   const [mode, setMode] = useState<AuthMode>("login");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
+  const isLogin = mode === "login";
+  const processingLabel = isLogin ? "Signing you in..." : "Creating your account...";
 
-  async function handleSubmit(formData: FormData) {
+  useEffect(() => {
+    router.prefetch("/terminal");
+  }, [router]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (loading) {
+      return;
+    }
+
+    const formData = new FormData(event.currentTarget);
     setLoading(true);
     setError("");
     setNotice("");
@@ -52,6 +66,8 @@ export default function LoginPage() {
     const email = String(formData.get("email") || "").trim();
     const password = String(formData.get("password") || "");
     const name = String(formData.get("name") || "").trim();
+
+    let shouldResetLoading = true;
 
     try {
       const authPayload =
@@ -76,11 +92,15 @@ export default function LoginPage() {
         method: "POST",
         body: JSON.stringify({ access_token: authPayload.access_token }),
       });
-      window.location.href = "/terminal";
+      shouldResetLoading = false;
+      router.replace("/terminal");
+      return;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Authentication failed.");
     } finally {
-      setLoading(false);
+      if (shouldResetLoading) {
+        setLoading(false);
+      }
     }
   }
 
@@ -99,6 +119,7 @@ export default function LoginPage() {
             <button
               className={`auth-toggle-button ${mode === "login" ? "is-active" : ""}`}
               onClick={() => setMode("login")}
+              disabled={loading}
               type="button"
             >
               Login
@@ -106,6 +127,7 @@ export default function LoginPage() {
             <button
               className={`auth-toggle-button ${mode === "register" ? "is-active" : ""}`}
               onClick={() => setMode("register")}
+              disabled={loading}
               type="button"
             >
               Register
@@ -115,25 +137,30 @@ export default function LoginPage() {
             <div className="auth-error">{error}</div>
           ) : null}
           {notice ? <div className="auth-notice">{notice}</div> : null}
-          <form action={async (formData) => await handleSubmit(formData)} className="auth-form">
+          <form onSubmit={handleSubmit} className="auth-form">
             {mode === "register" ? (
-              <input className="auth-input" name="name" placeholder="Name" />
+              <input className="auth-input" disabled={loading} name="name" placeholder="Name" />
             ) : null}
-            <input className="auth-input" name="email" placeholder="Email" type="email" />
+            <input className="auth-input" disabled={loading} name="email" placeholder="Email" type="email" />
             <input
               className="auth-input"
+              disabled={loading}
               name="password"
               placeholder="Password"
               type="password"
             />
             <button className="button button-primary auth-submit" disabled={loading} type="submit">
-              {loading ? "Working..." : mode === "login" ? "Sign In" : "Create Account"}
+              {loading ? processingLabel : mode === "login" ? (
+                "Sign In"
+              ) : (
+                "Create Account"
+              )}
             </button>
           </form>
           <div className="auth-divider" aria-hidden="true">
             <span>or</span>
           </div>
-          <button className="auth-oauth-button" type="button">
+          <button className="auth-oauth-button" disabled={loading} type="button">
             <svg aria-hidden="true" className="auth-oauth-icon" viewBox="0 0 18 18">
               <path
                 d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.7-1.56 2.68-3.86 2.68-6.62Z"
@@ -154,6 +181,12 @@ export default function LoginPage() {
             </svg>
             <span>Continue with Google</span>
           </button>
+          <div className="legal-links">
+            <a href="/about">About</a>
+            <a href="/pricing">Pricing</a>
+            <a href="/privacy">Privacy</a>
+            <a href="/terms">Terms</a>
+          </div>
         </div>
       </section>
     </main>

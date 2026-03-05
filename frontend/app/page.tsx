@@ -13,10 +13,13 @@ export default function HomePage() {
             <a className="button button-primary" href="/login">
               Sign In
             </a>
+            <a className="button" href="/pricing">
+              View Pricing
+            </a>
           </div>
         </div>
 
-        <div className="panel landing-preview">
+        <div className="panel landing-preview landing-preview-offset">
           <div className="landing-preview-head">
             <span className="eyebrow">Snapshot</span>
             <span className="status-chip">Live Workspace</span>
@@ -60,6 +63,12 @@ export default function HomePage() {
           <p>Share symbols, notes, alerts, and briefing snapshots across a collaborative workspace.</p>
         </article>
       </section>
+      <div className="legal-links">
+        <a href="/about">About</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+      </div>
     </main>
   );
 }

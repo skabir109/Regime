@@ -209,6 +209,19 @@ type WatchlistExposure = {
   market_links: string[];
 };
 
+type StressTestAssetImpact = {
+  symbol: string;
+  impact_direction: string;
+  magnitude: string;
+  rationale: string;
+};
+
+type StressTestResult = {
+  theme: string;
+  scenario_description: string;
+  affected_assets: StressTestAssetImpact[];
+};
+
 type WatchlistNewsItem = {
   title: string;
   source: string;
@@ -343,6 +356,12 @@ type WorldWsPayload = {
   world_timeline: NarrativeTimelineItem[];
 };
 
+type MapViewport = {
+  scale: number;
+  tx: number;
+  ty: number;
+};
+
 type Metadata = {
   classes: string[];
   features: string[];
@@ -355,6 +374,10 @@ type DeliveryPreferences = {
   email_enabled: boolean;
   webhook_enabled: boolean;
   webhook_url: string;
+  slack_enabled: boolean;
+  slack_webhook_url: string;
+  discord_enabled: boolean;
+  discord_webhook_url: string;
   cadence: string;
   timezone: string;
 };
@@ -364,6 +387,8 @@ type BriefingDeliveryResult = {
   cadence: string;
   email_status: string;
   webhook_status: string;
+  slack_status?: string;
+  discord_status?: string;
   delivery_channels: string[];
 };
 
@@ -449,6 +474,7 @@ type TerminalBootstrap = {
   transitions: RegimeTransition[];
   sectors: SectorPerformance[];
   watchlist: WatchlistItem[];
+  world_timeline: NarrativeTimelineItem[];
 };
 
 const views: { key: ViewKey; label: string; subtitle: string }[] = [
@@ -1397,6 +1423,10 @@ function emptyDelivery(): DeliveryPreferences {
     email_enabled: false,
     webhook_enabled: false,
     webhook_url: "",
+    slack_enabled: false,
+    slack_webhook_url: "",
+    discord_enabled: false,
+    discord_webhook_url: "",
     cadence: "premarket",
     timezone: "local",
   };
@@ -1412,7 +1442,7 @@ function toInitialData(bootstrap: TerminalBootstrap): TerminalData {
     worldAffairs: [],
     worldRegions: [],
     worldBriefing: emptyWorldBriefing(),
-    worldTimeline: [],
+    worldTimeline: bootstrap.world_timeline || [],
     alerts: [],
     sectors: bootstrap.sectors,
     marketPanels: [],
@@ -1429,6 +1459,50 @@ function toInitialData(bootstrap: TerminalBootstrap): TerminalData {
     tiers: [],
     workspace: null,
   };
+}
+
+const walkthroughContent = [
+  {
+    title: "Market Regime Detection",
+    text: "Our ML model classifies the current market state into Risk-On, Risk-Off, or High-Vol based on cross-asset flows.",
+  },
+  {
+    title: "Strategic Executive Summary",
+    text: "An AI-distilled take on how live news flow is either supporting or threatening the current regime.",
+  },
+  {
+    title: "Strategic Playbook",
+    text: "Actionable asset allocation tilts and tactical watches updated in real-time for your portfolio.",
+  },
+  {
+    title: "State Pack & Probability",
+    text: "Technical metrics like Breadth and Volatility that drive the model's confidence levels.",
+  },
+  {
+    title: "Institutional Export",
+    text: "Generate a clean, professional PDF report of this dashboard at any time using the 'Export Report' button.",
+  },
+];
+
+function OnboardingTooltip({ step, onNext, onSkip }: { step: number; onNext: () => void; onSkip: () => void }) {
+  const content = walkthroughContent[step];
+  if (!content) return null;
+
+  return (
+    <div className="nt-walkthrough-overlay">
+      <div className="nt-walkthrough-card">
+        <span className="eyebrow">Tour: Step {step + 1} of 5</span>
+        <h3>{content.title}</h3>
+        <p>{content.text}</p>
+        <div className="nt-actions">
+          <button className="button button-small" onClick={onSkip} type="button">Skip Tour</button>
+          <button className="button button-small button-primary" onClick={onNext} type="button">
+            {step === 4 ? "Finish" : "Next Step"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function TerminalShell() {
@@ -1451,6 +1525,10 @@ export default function TerminalShell() {
     email_enabled: false,
     webhook_enabled: false,
     webhook_url: "",
+    slack_enabled: false,
+    slack_webhook_url: "",
+    discord_enabled: false,
+    discord_webhook_url: "",
     cadence: "premarket",
     timezone: "local",
   });
@@ -1469,8 +1547,14 @@ export default function TerminalShell() {
     signals: false,
   });
   const [selectedAlertKey, setSelectedAlertKey] = useState("");
+  const [walkthroughStep, setWalkthroughStep] = useState(-1);
+  const [stressTestTheme, setStressTestTheme] = useState("Energy Shock");
+  const [stressTestResult, setStressTestResult] = useState<StressTestResult | null>(null);
+  const [stressTestLoading, setStressTestLoading] = useState(false);
   const [worldLastUpdatedAt, setWorldLastUpdatedAt] = useState<string>("");
   const [worldSocketConnected, setWorldSocketConnected] = useState(false);
+  const [mapViewport, setMapViewport] = useState<MapViewport>({ scale: 1, tx: 0, ty: 0 });
+  const [mapDragging, setMapDragging] = useState(false);
   const [hoveredCountry, setHoveredCountry] = useState<{
     screenX: number;
     screenY: number;
@@ -1479,6 +1563,7 @@ export default function TerminalShell() {
     intensity: number;
     drivers: string[];
   } | null>(null);
+  const mapDragRef = useRef<{ x: number; y: number } | null>(null);
   const aiCacheRef = useRef<Map<string, { expiresAt: number; value: AIAnalyzeResponse }>>(new Map());
   const aiInflightRef = useRef<Map<string, Promise<AIAnalyzeResponse>>>(new Map());
   const aiSignatureRef = useRef({
@@ -1488,6 +1573,19 @@ export default function TerminalShell() {
     signals: "",
   });
   const activeViewRef = useRef<ViewKey>("monitor");
+
+  function handleExportPDF() {
+    window.print();
+  }
+
+  function handleNextWalkthrough() {
+    if (walkthroughStep >= 4) {
+      setShowOnboarding(false);
+      setWalkthroughStep(0);
+    } else {
+      setWalkthroughStep((s) => s + 1);
+    }
+  }
 
   async function loadCoreData(silent = false) {
     if (!silent) {
@@ -1509,6 +1607,7 @@ export default function TerminalShell() {
               transitions: bootstrap.transitions,
               sectors: bootstrap.sectors,
               watchlist: bootstrap.watchlist,
+              worldTimeline: bootstrap.world_timeline || current.worldTimeline,
             }
           : toInitialData(bootstrap),
       );
@@ -1670,6 +1769,20 @@ export default function TerminalShell() {
       // keep last successful output instead of clearing card
     } finally {
       setAiLoading((current) => ({ ...current, alert: false }));
+    }
+  }
+
+  async function handleGenerateStressTest(theme: string) {
+    if (!theme) return;
+    setStressTestLoading(true);
+    setStressTestTheme(theme);
+    try {
+      const result = await apiFetch<StressTestResult>(`/watchlist/stress-test/${encodeURIComponent(theme)}`);
+      setStressTestResult(result);
+    } catch {
+      // keep previous result on error
+    } finally {
+      setStressTestLoading(false);
     }
   }
 
@@ -2116,6 +2229,15 @@ export default function TerminalShell() {
   }, []);
 
   useEffect(() => {
+    const stopDragging = () => {
+      setMapDragging(false);
+      mapDragRef.current = null;
+    };
+    window.addEventListener("mouseup", stopDragging);
+    return () => window.removeEventListener("mouseup", stopDragging);
+  }, []);
+
+  useEffect(() => {
     if (!data) {
       return;
     }
@@ -2130,6 +2252,7 @@ export default function TerminalShell() {
       window.localStorage.setItem(`regime_onboarding_${data.me.id}_${data.me.tier}`, "seen");
     }
     setShowOnboarding(false);
+    setWalkthroughStep(-1);
   }
 
   function navigateToView(view: ViewKey) {
@@ -2335,6 +2458,27 @@ export default function TerminalShell() {
     }
   }
 
+  function clampMapViewport(next: MapViewport): MapViewport {
+    const scale = Math.max(1, Math.min(3.6, next.scale));
+    const maxTx = ((scale - 1) * 520) / 2;
+    const maxTy = ((scale - 1) * 280) / 2;
+    return {
+      scale,
+      tx: Math.max(-maxTx, Math.min(maxTx, next.tx)),
+      ty: Math.max(-maxTy, Math.min(maxTy, next.ty)),
+    };
+  }
+
+  function applyZoom(multiplier: number) {
+    setMapViewport((current) => clampMapViewport({ ...current, scale: current.scale * multiplier }));
+  }
+
+  function resetMapViewport() {
+    setMapViewport({ scale: 1, tx: 0, ty: 0 });
+    setMapDragging(false);
+    mapDragRef.current = null;
+  }
+
   const currentTier = data?.me?.tier || "free";
   const visibleViews = views.filter((view) => canAccessView(view.key, currentTier));
   const activeViewMeta = visibleViews.find((view) => view.key === activeView) || visibleViews[0] || views[0];
@@ -2479,7 +2623,14 @@ export default function TerminalShell() {
         </aside>
 
         <section className="nt-main">
-          {showOnboarding ? (
+          {showOnboarding && walkthroughStep >= 0 && (
+            <OnboardingTooltip
+              step={walkthroughStep}
+              onNext={handleNextWalkthrough}
+              onSkip={() => { setShowOnboarding(false); setWalkthroughStep(0); }}
+            />
+          )}
+          {showOnboarding && walkthroughStep === -1 ? (
             <section className="nt-overlay" role="dialog" aria-modal="true" aria-label="Welcome to Regime">
               <div className="nt-onboarding">
                 <div className="nt-onboarding-head">
@@ -2521,11 +2672,11 @@ export default function TerminalShell() {
                   ) : null}
                 </div>
                 <div className="nt-onboarding-actions">
-                  <button className="button button-primary" onClick={() => { setActiveView("monitor"); dismissOnboarding(); }} type="button">
-                    Open Overview
+                  <button className="button button-primary" onClick={() => { setActiveView("monitor"); setWalkthroughStep(0); }} type="button">
+                    Take the Tour
                   </button>
-                  <button className="button" onClick={() => { setActiveView("system"); dismissOnboarding(); }} type="button">
-                    Review Plan
+                  <button className="button" onClick={() => { setActiveView("monitor"); dismissOnboarding(); }} type="button">
+                    Skip to Dashboard
                   </button>
                 </div>
               </div>
@@ -2555,9 +2706,15 @@ export default function TerminalShell() {
                 <span className="nt-clock">{clock || "--:--:--"}</span>
               </div>
               <div className="nt-actions">
-              <button className="button" onClick={() => void refreshActiveView()} type="button">
-                {refreshing ? "Refreshing..." : "Refresh"}
-              </button>
+                <button className="button button-small" onClick={() => { setShowOnboarding(true); setWalkthroughStep(0); }} type="button">
+                  Terminal Tour
+                </button>
+                <button className="button button-small button-primary" onClick={handleExportPDF} type="button">
+                  Export Report
+                </button>
+                <button className="button" onClick={() => void refreshActiveView()} type="button">
+                  {refreshing ? "Refreshing..." : "Refresh"}
+                </button>
               </div>
             </div>
           </header>
@@ -3170,87 +3327,165 @@ export default function TerminalShell() {
                 </div>
               </article>
 
+              <article className="nt-panel nt-card nt-settings-wide">
+                <span className="eyebrow">Interactive Stress Testing</span>
+                <div className="nt-stack">
+                  <div className="nt-row nt-between">
+                    <div className="nt-actions" style={{ flexWrap: "wrap" }}>
+                      {["Energy Shock", "Geopolitical Conflict", "Monetary Policy", "China Growth", "Trade War"].map((theme) => (
+                        <button
+                          key={theme}
+                          className={`button button-small ${stressTestTheme === theme ? 'button-primary' : ''}`}
+                          onClick={() => handleGenerateStressTest(theme)}
+                          disabled={stressTestLoading}
+                        >
+                          {stressTestLoading && stressTestTheme === theme ? "Simulating..." : `Simulate ${theme}`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {stressTestResult ? (
+                    <div className="nt-stack" style={{ marginTop: 12 }}>
+                      <p className="lead-copy" style={{ color: "var(--cyan)", borderLeft: "3px solid var(--cyan)", paddingLeft: 12 }}>
+                        {stressTestResult.scenario_description}
+                      </p>
+                      <div className="nt-split">
+                        {stressTestResult.affected_assets.map((asset) => (
+                          <div className="nt-list-item" key={asset.symbol}>
+                            <strong>{asset.symbol} • {asset.magnitude} Exposure</strong>
+                            <div className="nt-impact-row nt-mini">
+                              <span className={`nt-sentiment ${asset.impact_direction.toLowerCase()}`}>{asset.impact_direction}</span>
+                            </div>
+                            <p>{asset.rationale}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="muted-copy">Select a macro shock scenario to see the projected impact on your watchlist.</p>
+                  )}
+                </div>
+              </article>
+
               <article className="nt-panel nt-card nt-world-heatmap-card">
                 <div className="nt-world-map-header">
                   <span className="eyebrow">Geopolitical Heatmap</span>
-                  <span className="nt-world-map-live">
-                    {worldSocketConnected ? "Live WebSocket" : "Live Polling"}{" "}
-                    {worldLastUpdatedAt ? `• Updated ${formatDateTime(worldLastUpdatedAt, currentTimezone)}` : ""}
-                  </span>
+                  <div className="nt-world-map-meta">
+                    <span className="nt-world-map-live">
+                      {worldSocketConnected ? "Live WebSocket" : "Live Polling"}{" "}
+                      {worldLastUpdatedAt ? `• Updated ${formatDateTime(worldLastUpdatedAt, currentTimezone)}` : ""}
+                    </span>
+                    <div className="nt-world-map-controls">
+                      <button className="button button-small" type="button" onClick={() => applyZoom(1.2)}>+</button>
+                      <button className="button button-small" type="button" onClick={() => applyZoom(0.84)}>-</button>
+                      <button className="button button-small" type="button" onClick={resetMapViewport}>Reset</button>
+                    </div>
+                  </div>
                 </div>
                 <div className="nt-world-map-wrap">
                   <svg
-                    className="nt-world-map"
+                    className={`nt-world-map ${mapViewport.scale > 1 ? "is-zoomed" : ""} ${mapDragging ? "is-dragging" : ""}`.trim()}
                     viewBox="0 0 520 280"
                     preserveAspectRatio="xMidYMid meet"
                     role="img"
                     aria-label="Global event intensity heatmap"
+                    onWheel={(event) => {
+                      event.preventDefault();
+                      applyZoom(event.deltaY < 0 ? 1.1 : 0.9);
+                    }}
+                    onMouseDown={(event) => {
+                      if (mapViewport.scale <= 1) {
+                        return;
+                      }
+                      setMapDragging(true);
+                      mapDragRef.current = { x: event.clientX, y: event.clientY };
+                    }}
+                    onMouseMove={(event) => {
+                      if (!mapDragging || !mapDragRef.current) {
+                        return;
+                      }
+                      const rect = event.currentTarget.getBoundingClientRect();
+                      const deltaX = ((event.clientX - mapDragRef.current.x) / Math.max(rect.width, 1)) * 520;
+                      const deltaY = ((event.clientY - mapDragRef.current.y) / Math.max(rect.height, 1)) * 280;
+                      mapDragRef.current = { x: event.clientX, y: event.clientY };
+                      setMapViewport((current) => clampMapViewport({ ...current, tx: current.tx + deltaX, ty: current.ty + deltaY }));
+                    }}
+                    onMouseUp={() => {
+                      setMapDragging(false);
+                      mapDragRef.current = null;
+                    }}
+                    onMouseLeave={() => {
+                      setMapDragging(false);
+                      mapDragRef.current = null;
+                    }}
                   >
                     <rect x="1" y="1" width="518" height="278" className="nt-world-map-frame" />
-                    <path d={WORLD_MAP.graticulePath} className="nt-world-map-grid" />
-                    {WORLD_MAP.countryPaths.map((country) => {
-                      const countryPoint = countryHeatById.get(country.id);
-                      return (
-                        <path
-                          key={`geo-country-${country.id}`}
-                          d={country.path}
-                          fill={countryPoint?.fill || "rgba(87, 212, 255, 0.16)"}
-                          className="nt-world-map-region"
-                          onMouseEnter={(event) => {
-                            if (!countryPoint) {
-                              return;
-                            }
-                            setHoveredCountry({
-                              screenX: event.clientX,
-                              screenY: event.clientY,
-                              name: countryPoint.name,
-                              region: GEO_REGIONS.find((item) => item.key === countryPoint.region)?.label || countryPoint.region,
-                              intensity: countryPoint.intensity,
-                              drivers: countryPoint.drivers,
-                            });
-                          }}
-                          onMouseMove={(event) => {
-                            setHoveredCountry((current) =>
-                              current
-                                ? {
-                                    ...current,
-                                    screenX: event.clientX,
-                                    screenY: event.clientY,
-                                  }
-                                : current,
-                            );
-                          }}
-                          onMouseLeave={() => setHoveredCountry(null)}
-                        />
-                      );
-                    })}
-                    {topGeoHotspots.map((item, index) => {
-                      const radius = 8 + item.intensity * 11;
-                      return (
-                        <g key={`geo-hotspot-ring-${item.key}`}>
-                          <circle
-                            cx={item.center[0]}
-                            cy={item.center[1]}
-                            r={radius}
-                            className="nt-world-map-hotspot-ring"
-                            style={{ animationDelay: `${index * 220}ms` }}
+                    <g transform={`translate(${260 + mapViewport.tx} ${140 + mapViewport.ty}) scale(${mapViewport.scale}) translate(-260 -140)`}>
+                      <path d={WORLD_MAP.graticulePath} className="nt-world-map-grid" />
+                      {WORLD_MAP.countryPaths.map((country) => {
+                        const countryPoint = countryHeatById.get(country.id);
+                        return (
+                          <path
+                            key={`geo-country-${country.id}`}
+                            d={country.path}
+                            fill={countryPoint?.fill || "rgba(87, 212, 255, 0.16)"}
+                            className="nt-world-map-region"
+                            onMouseEnter={(event) => {
+                              if (!countryPoint) {
+                                return;
+                              }
+                              setHoveredCountry({
+                                screenX: event.clientX,
+                                screenY: event.clientY,
+                                name: countryPoint.name,
+                                region: GEO_REGIONS.find((item) => item.key === countryPoint.region)?.label || countryPoint.region,
+                                intensity: countryPoint.intensity,
+                                drivers: countryPoint.drivers,
+                              });
+                            }}
+                            onMouseMove={(event) => {
+                              setHoveredCountry((current) =>
+                                current
+                                  ? {
+                                      ...current,
+                                      screenX: event.clientX,
+                                      screenY: event.clientY,
+                                    }
+                                  : current,
+                              );
+                            }}
+                            onMouseLeave={() => setHoveredCountry(null)}
                           />
-                          <circle
-                            cx={item.center[0]}
-                            cy={item.center[1]}
-                            r="2"
-                            className="nt-world-map-hotspot-core"
-                          />
+                        );
+                      })}
+                      {topGeoHotspots.map((item, index) => {
+                        const radius = 8 + item.intensity * 11;
+                        return (
+                          <g key={`geo-hotspot-ring-${item.key}`}>
+                            <circle
+                              cx={item.center[0]}
+                              cy={item.center[1]}
+                              r={radius}
+                              className="nt-world-map-hotspot-ring"
+                              style={{ animationDelay: `${index * 220}ms` }}
+                            />
+                            <circle
+                              cx={item.center[0]}
+                              cy={item.center[1]}
+                              r="2"
+                              className="nt-world-map-hotspot-core"
+                            />
+                          </g>
+                        );
+                      })}
+                      {geoHeatmap.map((region) => (
+                        <g key={region.key}>
+                          <text x={region.center[0]} y={region.center[1]} className="nt-world-map-label">
+                            {region.label}
+                          </text>
                         </g>
-                      );
-                    })}
-                    {geoHeatmap.map((region) => (
-                      <g key={region.key}>
-                        <text x={region.center[0]} y={region.center[1]} className="nt-world-map-label">
-                          {region.label}
-                        </text>
-                      </g>
-                    ))}
+                      ))}
+                    </g>
                   </svg>
                   {hoveredCountry ? (
                     <div
@@ -3291,21 +3526,34 @@ export default function TerminalShell() {
 
               <article className="nt-panel nt-card nt-settings-wide">
                 <span className="eyebrow">Narrative Timeline</span>
-                <div className="nt-stack">
+                <div className="nt-timeline-container">
                   {(data?.worldTimeline || []).map((item) => (
-                    <div className="nt-list-item" key={`${item.title}-${item.published_at}`}>
-                      <strong>{item.title}</strong>
-                      <span>{item.theme} • {item.region} • {formatDateTime(item.published_at, currentTimezone)}</span>
-                      <p><strong>Event:</strong> {item.event_summary}</p>
-                      <p><strong>Market Reaction:</strong> {item.market_reaction}</p>
-                      <p><strong>Follow-Through:</strong> {item.follow_through}</p>
-                      <p><strong>Current Implication:</strong> {item.current_implication}</p>
+                    <div className="nt-timeline-item" key={`${item.title}-${item.published_at}`}>
+                      <span className="nt-timeline-date">{formatDateTime(item.published_at, currentTimezone)}</span>
+                      <div className="nt-timeline-content">
+                        <strong>{item.title}</strong>
+                        <span>{item.theme} • {item.region}</span>
+                        <p>{item.event_summary}</p>
+                        <div className="nt-timeline-grid">
+                          <div>
+                            <span>Market Reaction</span>
+                            {item.market_reaction}
+                          </div>
+                          <div>
+                            <span>Follow-Through</span>
+                            {item.follow_through}
+                          </div>
+                          <div style={{ gridColumn: "span 2" }}>
+                            <span>Implication</span>
+                            {item.current_implication}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   ))}
                   {worldHydrating && !data?.worldTimeline.length ? <SkeletonList rows={4} /> : null}
                 </div>
               </article>
-
               {firstItems(data?.worldAffairs, 6).map((event) => (
                 <article className="nt-panel nt-card" key={`${event.title}-${event.published_at}`}>
                   <span className="eyebrow">{event.theme} • {event.region}</span>
@@ -3854,6 +4102,30 @@ export default function TerminalShell() {
                           <span>{webhookUnlocked ? "Forward updates into an external workflow." : "Available on Pro and Desk plans."}</span>
                         </div>
                       </label>
+                      <label className="nt-simple-toggle">
+                        <input
+                          disabled={!webhookUnlocked}
+                          checked={deliveryForm.slack_enabled}
+                          onChange={(event) => setDeliveryForm((current) => ({ ...current, slack_enabled: event.target.checked }))}
+                          type="checkbox"
+                        />
+                        <div>
+                          <strong>Slack Delivery</strong>
+                          <span>{webhookUnlocked ? "Post the global macro brief into a Slack channel." : "Available on Pro and Desk plans."}</span>
+                        </div>
+                      </label>
+                      <label className="nt-simple-toggle">
+                        <input
+                          disabled={!webhookUnlocked}
+                          checked={deliveryForm.discord_enabled}
+                          onChange={(event) => setDeliveryForm((current) => ({ ...current, discord_enabled: event.target.checked }))}
+                          type="checkbox"
+                        />
+                        <div>
+                          <strong>Discord Delivery</strong>
+                          <span>{webhookUnlocked ? "Post the global macro brief into a Discord channel." : "Available on Pro and Desk plans."}</span>
+                        </div>
+                      </label>
                     </div>
                     <div className="nt-settings-group">
                       <label className="nt-settings-inline-field">
@@ -3895,11 +4167,38 @@ export default function TerminalShell() {
                           />
                         </label>
                       ) : null}
+                      {deliveryForm.slack_enabled ? (
+                        <label className="nt-settings-inline-field">
+                          <span className="eyebrow">Slack Webhook URL</span>
+                          <input
+                            className="nt-input"
+                            onChange={(event) => setDeliveryForm((current) => ({ ...current, slack_webhook_url: event.target.value }))}
+                            placeholder="https://hooks.slack.com/services/..."
+                            value={deliveryForm.slack_webhook_url}
+                          />
+                        </label>
+                      ) : null}
+                      {deliveryForm.discord_enabled ? (
+                        <label className="nt-settings-inline-field">
+                          <span className="eyebrow">Discord Webhook URL</span>
+                          <input
+                            className="nt-input"
+                            onChange={(event) => setDeliveryForm((current) => ({ ...current, discord_webhook_url: event.target.value }))}
+                            placeholder="https://discord.com/api/webhooks/..."
+                            value={deliveryForm.discord_webhook_url}
+                          />
+                        </label>
+                      ) : null}
                       {deliveryResult ? (
                         <div className="nt-settings-result">
                           <strong>{deliveryResult.headline}</strong>
                           <span>{labelizeKey(deliveryResult.cadence)}</span>
-                          <p>Email: {deliveryResult.email_status} | Webhook: {deliveryResult.webhook_status}</p>
+                          <p>
+                            Email: {deliveryResult.email_status}
+                            {" | "}Webhook: {deliveryResult.webhook_status}
+                            {" | "}Slack: {deliveryResult.slack_status || "disabled"}
+                            {" | "}Discord: {deliveryResult.discord_status || "disabled"}
+                          </p>
                         </div>
                       ) : null}
                     </div>

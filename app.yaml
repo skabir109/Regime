@@ -12,14 +12,27 @@ services:
     envs:
       - key: DATABASE_URL
         scope: RUN_TIME
-        value: ${db.DATABASE_URL}
+        value: ${DATABASE_URL}
       - key: DIRECT_URL
         scope: RUN_TIME
-        value: ${db.DATABASE_URL}
+        value: ${DIRECT_URL}
+      - key: LLM_API_KEY
+        scope: RUN_TIME
+        value: ${LLM_API_KEY}
     run_command: uvicorn app.main:app --host 0.0.0.0 --port 8000
-databases:
-  - engine: PG
-    name: db
-    num_nodes: 1
-    size_slug: db-s-dev-7b
-    version: "15"
+
+  - name: regime-web
+    github:
+      repo: your-repo/regime
+      branch: main
+      deploy_on_push: true
+    source_dir: frontend
+    http_port: 3000
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    envs:
+      - key: NEXT_PUBLIC_API_BASE_URL
+        scope: RUN_AND_BUILD_TIME
+        value: ${regime-api.PUBLIC_URL}
+    build_command: npm run build
+    run_command: npm run start

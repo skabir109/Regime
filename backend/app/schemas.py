@@ -71,8 +71,10 @@ class DeliveryPreferencesDB(SQLModel, table=True):
     webhook_url: Optional[str] = None
     slack_enabled: bool = SQLField(default=False)
     slack_webhook_url: Optional[str] = None
+    discord_enabled: bool = SQLField(default=False)
+    discord_webhook_url: Optional[str] = None
     cadence: str = SQLField(default="premarket")
-    updated_at: datetime = SQLField(default_factory=datetime.utcnow)
+    timezone: str = SQLField(default="local")
     updated_at: datetime = SQLField(default_factory=datetime.utcnow)
 
     user: User = Relationship(back_populates="delivery_preferences")
@@ -445,6 +447,17 @@ class WatchlistExposure(BaseModel):
     drivers: list[str] = []
     market_links: list[str] = []
 
+class StressTestAssetImpact(BaseModel):
+    symbol: str
+    impact_direction: str # "Positive", "Negative", "Neutral", "Mixed"
+    magnitude: str # "High", "Medium", "Low"
+    rationale: str
+
+class StressTestResult(BaseModel):
+    theme: str
+    scenario_description: str
+    affected_assets: list[StressTestAssetImpact]
+
 
 class PremarketBriefing(BaseModel):
     headline: str
@@ -481,11 +494,14 @@ class BriefingHistoryItem(BaseModel):
     headline: str
     overview: str
 
-
 class DeliveryPreferences(BaseModel):
     email_enabled: bool
     webhook_enabled: bool
     webhook_url: str
+    slack_enabled: bool = False
+    slack_webhook_url: str = ""
+    discord_enabled: bool = False
+    discord_webhook_url: str = ""
     cadence: str
     timezone: str
 
@@ -494,7 +510,11 @@ class DeliveryPreferencesRequest(BaseModel):
     email_enabled: bool
     webhook_enabled: bool
     webhook_url: str | None = None
-    cadence: str
+    slack_enabled: bool = False
+    slack_webhook_url: str | None = None
+    discord_enabled: bool = False
+    discord_webhook_url: str | None = None
+    cadence: str = "premarket"
     timezone: str | None = None
 
 
@@ -503,6 +523,8 @@ class BriefingDeliveryResult(BaseModel):
     cadence: str
     email_status: str
     webhook_status: str
+    slack_status: str = "disabled"
+    discord_status: str = "disabled"
     delivery_channels: list[str] = []
 
 
@@ -583,6 +605,7 @@ class TerminalBootstrapResponse(BaseModel):
     transitions: list[RegimeTransition]
     sectors: list[SectorPerformance] = []
     watchlist: list[WatchlistItem] = []
+    world_timeline: list[NarrativeTimelineItem] = []
 
 
 class AIAnalyzeRequest(BaseModel):

@@ -462,3 +462,93 @@ def build_watchlist_exposures(user_id: int) -> list[dict]:
         )
 
     return exposures
+
+def build_stress_test(user_id: int, theme_key: str) -> dict:
+    watchlist = load_watchlist(user_id)
+    
+    theme_rules_dict = {rule["theme"].lower(): rule for rule in THEME_RULES}
+    theme_lower = theme_key.lower()
+    
+    matched_rule = None
+    for k, rule in theme_rules_dict.items():
+        if theme_lower in k or k in theme_lower:
+            matched_rule = rule
+            break
+            
+    if not matched_rule:
+        matched_rule = {
+            "theme": theme_key,
+            "why": f"Hypothetical shock scenario involving {theme_key}.",
+            "second_order_effects": []
+        }
+
+    scenario_description = f"Simulating a major shock event in: {matched_rule['theme']}. {matched_rule.get('why', '')}"
+    if matched_rule.get('second_order_effects'):
+        scenario_description += " Ripple effects: " + " ".join(matched_rule['second_order_effects'])
+        
+    affected_assets = []
+    for item in watchlist:
+        base = WATCHLIST_EXPOSURES.get(
+            item["symbol"],
+            {
+                "sensitivity": "Low",
+                "themes": [],
+                "market_links": ["Broad market beta"],
+            },
+        )
+        
+        # Determine impact
+        impact_direction = "Neutral"
+        magnitude = "Low"
+        rationale = f"{item['symbol']} has limited direct exposure."
+        
+        # Check if exposed to the theme
+        is_exposed = False
+        for t in base["themes"]:
+            if t.lower() == matched_rule["theme"].lower():
+                is_exposed = True
+                break
+                
+        if is_exposed:
+            magnitude = base["sensitivity"]
+            # Simplified logic for demo:
+            if "Conflict" in matched_rule["theme"] or "Energy" in matched_rule["theme"]:
+                if "Oil" in base["market_links"] or "Defense" in base["market_links"] or "Safe Haven" in base["market_links"]:
+                    impact_direction = "Positive"
+                    rationale = f"Benefits from safe haven flows or commodity spikes linked to {matched_rule['theme']}."
+                else:
+                    impact_direction = "Negative"
+                    rationale = f"Faces margin pressure or risk-off selling from {matched_rule['theme']} shock."
+            elif "Monetary" in matched_rule["theme"] or "Inflation" in matched_rule["theme"]:
+                if "Growth" in base["market_links"] or "Tech" in base.get("market_links", []) or "Broad Market Beta" in base["market_links"]:
+                    impact_direction = "Negative"
+                    rationale = "Rate spikes pressure discount rates and broader equity valuations."
+                elif "Yields" in base["market_links"] or "Safe Haven" in base["market_links"]:
+                    impact_direction = "Positive"
+                    rationale = "Benefits from rising real yields or flight to quality."
+            elif "China" in matched_rule["theme"] or "Trade" in matched_rule["theme"]:
+                if "Semiconductors" in base["market_links"] or "Consumer Demand" in base["market_links"]:
+                    impact_direction = "Negative"
+                    rationale = "Highly sensitive to supply chain disruptions and global trade tariffs."
+            
+            if impact_direction == "Neutral":
+                 impact_direction = "Mixed"
+                 rationale = f"Complex exposure to {', '.join(base['market_links'][:2])} creates mixed outcomes."
+
+        if impact_direction != "Neutral" or magnitude != "Low":
+            affected_assets.append({
+                "symbol": item["symbol"],
+                "impact_direction": impact_direction,
+                "magnitude": magnitude,
+                "rationale": rationale
+            })
+            
+    # Sort so High magnitude or Negative/Positive impact is first
+    mag_rank = {"Extreme": 0, "High": 1, "Medium": 2, "Low": 3}
+    affected_assets.sort(key=lambda x: mag_rank.get(x["magnitude"], 4))
+    
+    return {
+        "theme": matched_rule["theme"],
+        "scenario_description": scenario_description,
+        "affected_assets": affected_assets
+    }

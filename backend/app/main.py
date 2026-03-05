@@ -59,6 +59,7 @@ from app.schemas import (
     SubscriptionUpdateRequest,
     SupabaseSessionRequest,
     TerminalBootstrapResponse,
+    StressTestResult,
     PremarketBriefing,
     WorldAffairsBriefing,
     WorldAffairsEvent,
@@ -123,6 +124,7 @@ from app.services.world_affairs import (
     build_world_affairs_monitor,
     build_world_affairs_regions,
     build_narrative_timeline,
+    build_stress_test,
 )
 from app.services.llm import generate_analysis
 
@@ -361,6 +363,7 @@ def _cached_terminal_bootstrap(current_user: dict):
             transitions=_cached_regime_transitions(limit=8),
             sectors=_cached_market_sectors(8),
             watchlist=load_watchlist(user_id),
+            world_timeline=_cached_world_timeline(6),
         ),
     )
 
@@ -777,6 +780,14 @@ def watchlist_exposures(current_user: dict = Depends(current_user_or_401)):
     return _cached_watchlist_exposures(current_user["id"])
 
 
+@app.get("/watchlist/stress-test/{theme}", response_model=StressTestResult, tags=["terminal"])
+def watchlist_stress_test(theme: str, current_user: dict = Depends(current_user_or_401)):
+    try:
+        return build_stress_test(current_user["id"], theme)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/watchlist/{symbol}/detail", response_model=WatchlistDetailResponse, tags=["terminal"])
 def watchlist_detail(symbol: str, current_user: dict = Depends(current_user_or_401)):
     try:
@@ -811,6 +822,10 @@ def settings_delivery_update(
             payload.webhook_url,
             payload.cadence,
             payload.timezone,
+            payload.slack_enabled,
+            payload.slack_webhook_url,
+            payload.discord_enabled,
+            payload.discord_webhook_url,
         )
         _invalidate_user_terminal_cache(current_user["id"])
         return result
