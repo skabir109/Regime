@@ -4,10 +4,23 @@ from app.config import DATABASE_URL, DIRECT_URL
 
 
 def is_postgres_configured() -> bool:
-    return DATABASE_URL.startswith("postgresql://") or DATABASE_URL.startswith("postgres://")
+    return (
+        DATABASE_URL.startswith("postgresql://")
+        or DATABASE_URL.startswith("postgres://")
+        or DATABASE_URL.startswith("postgresql+psycopg://")
+    )
+
+
+def _normalize_postgres_driver(db_url: str) -> str:
+    if db_url.startswith("postgres://"):
+        return "postgresql+psycopg://" + db_url[len("postgres://"):]
+    if db_url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + db_url[len("postgresql://"):]
+    return db_url
 
 def get_engine(use_direct: bool = False):
     db_url = DIRECT_URL if use_direct and is_postgres_configured() else DATABASE_URL
+    db_url = _normalize_postgres_driver(db_url)
     
     # Handle the pgbouncer=true case for SQLModel/SQLAlchemy
     connect_args = {}

@@ -122,6 +122,7 @@ type WorldAffairsRegionSummary = {
   theme_count: number;
   active_themes: string[];
   affected_assets: string[];
+  intensity: number;
   headline: string;
 };
 
@@ -1089,14 +1090,17 @@ function buildGeoHeatmapScores(regions: WorldAffairsRegionSummary[], events: Wor
   }
 
   for (const region of regions || []) {
-    const countScore = Math.max(0, region.theme_count || 0) * 0.9;
+    const countScore = Math.max(0, region.theme_count || 0) * 0.4;
+    const intensityScore = (region.intensity || 0) * 1.8;
+    const totalRegionScore = countScore + intensityScore;
+    
     const key = inferGeoRegionKey(region.region, region.headline, region.active_themes.join(" "));
     if (key) {
       const current = scores.get(key) || 0;
-      scores.set(key, current + countScore);
+      scores.set(key, current + totalRegionScore);
       continue;
     }
-    const spillover = countScore * 0.12;
+    const spillover = totalRegionScore * 0.12;
     for (const descriptor of GEO_REGIONS) {
       scores.set(descriptor.key, (scores.get(descriptor.key) || 0) + spillover);
     }

@@ -231,6 +231,7 @@ class WorldAffairsRegionSummary(BaseModel):
     theme_count: int
     active_themes: list[str] = []
     affected_assets: list[str] = []
+    intensity: float = 0.0
     headline: str
 
 

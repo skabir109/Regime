@@ -383,12 +383,21 @@ def build_narrative_timeline(limit: int = 6, events: list[dict] | None = None) -
     return timeline
 
 
+def _calculate_event_intensity(severity: str, urgency: str) -> float:
+    # Scale from 0.1 to 1.0
+    sev_map = {"high": 0.5, "medium": 0.3, "low": 0.1}
+    urg_map = {"high": 0.5, "medium": 0.3, "low": 0.1}
+    return sev_map.get(severity.lower(), 0.1) + urg_map.get(urgency.lower(), 0.1)
+
+
 def build_world_affairs_regions(limit: int = 6, events: list[dict] | None = None) -> list[dict]:
-    events = events if events is not None else build_world_affairs_monitor(limit=max(limit * 2, 8))
+    events = events if events is not None else build_world_affairs_monitor(limit=max(limit * 2, 12))
     grouped: dict[str, dict] = {}
 
     for event in events:
         region = event["region"]
+        intensity = _calculate_event_intensity(event["severity"], event["urgency"])
+        
         bucket = grouped.setdefault(
             region,
             {
@@ -396,18 +405,25 @@ def build_world_affairs_regions(limit: int = 6, events: list[dict] | None = None
                 "theme_count": 0,
                 "active_themes": [],
                 "affected_assets": [],
+                "intensity": 0.0,
                 "headline": event["title"],
             },
         )
         if event["theme"] not in bucket["active_themes"]:
             bucket["active_themes"].append(event["theme"])
             bucket["theme_count"] += 1
+            
+        # Capture the peak intensity for the region
+        if intensity > bucket["intensity"]:
+            bucket["intensity"] = intensity
+            bucket["headline"] = event["title"]
+            
         for asset in event["affected_assets"]:
             if asset not in bucket["affected_assets"]:
                 bucket["affected_assets"].append(asset)
 
     summaries = list(grouped.values())
-    summaries.sort(key=lambda item: (-item["theme_count"], item["region"]))
+    summaries.sort(key=lambda item: (-item["intensity"], -item["theme_count"]))
     for item in summaries:
         item["active_themes"] = item["active_themes"][:4]
         item["affected_assets"] = item["affected_assets"][:5]
