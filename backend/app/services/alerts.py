@@ -45,12 +45,19 @@ def build_alert_context(
     }
 
 
-def build_alerts_for_watchlist(model, meta: dict, watchlist: list[dict]) -> list[dict]:
+def build_alerts_for_watchlist(
+    model,
+    meta: dict,
+    watchlist: list[dict],
+    prediction=None,
+    news: list[dict] | None = None,
+    world_events: list[dict] | None = None,
+) -> list[dict]:
     alerts = []
-    prediction = predict_latest(model, meta)
+    prediction = prediction or predict_latest(model, meta)
     watch_symbols = {item["symbol"] for item in watchlist if item.get("symbol")}
-    news = fetch_market_news(limit=4)
-    world_events = build_world_affairs_monitor(limit=3)
+    news = news if news is not None else fetch_market_news(limit=4)
+    world_events = world_events if world_events is not None else build_world_affairs_monitor(limit=3)
 
     if prediction.regime == "HighVol":
         alerts.append(
@@ -124,5 +131,21 @@ def build_alerts_for_watchlist(model, meta: dict, watchlist: list[dict]) -> list
     return alerts[:6]
 
 
-def build_alerts(model, meta: dict, user_id: int) -> list[dict]:
-    return build_alerts_for_watchlist(model, meta, load_watchlist(user_id))
+def build_alerts(
+    model,
+    meta: dict,
+    user_id: int,
+    watchlist: list[dict] | None = None,
+    prediction=None,
+    news: list[dict] | None = None,
+    world_events: list[dict] | None = None,
+) -> list[dict]:
+    rows = watchlist if watchlist is not None else load_watchlist(user_id)
+    return build_alerts_for_watchlist(
+        model,
+        meta,
+        rows,
+        prediction=prediction,
+        news=news,
+        world_events=world_events,
+    )

@@ -290,8 +290,8 @@ def build_world_affairs_monitor(limit: int = 8) -> list[dict]:
     return events[:limit]
 
 
-def build_world_affairs_briefing(limit: int = 5) -> dict:
-    events = build_world_affairs_monitor(limit=limit)
+def build_world_affairs_briefing(limit: int = 5, events: list[dict] | None = None) -> dict:
+    events = events if events is not None else build_world_affairs_monitor(limit=limit)
     if not events:
         return {
             "headline": "Global macro monitor",
@@ -354,8 +354,8 @@ def _timeline_follow_through(event: dict) -> str:
     return "Follow-through matters more than the first headline print."
 
 
-def build_narrative_timeline(limit: int = 6) -> list[dict]:
-    events = build_world_affairs_monitor(limit=max(limit * 2, 10))
+def build_narrative_timeline(limit: int = 6, events: list[dict] | None = None) -> list[dict]:
+    events = events if events is not None else build_world_affairs_monitor(limit=max(limit * 2, 10))
     timeline = []
     seen_titles = set()
 
@@ -383,8 +383,8 @@ def build_narrative_timeline(limit: int = 6) -> list[dict]:
     return timeline
 
 
-def build_world_affairs_regions(limit: int = 6) -> list[dict]:
-    events = build_world_affairs_monitor(limit=max(limit * 2, 8))
+def build_world_affairs_regions(limit: int = 6, events: list[dict] | None = None) -> list[dict]:
+    events = events if events is not None else build_world_affairs_monitor(limit=max(limit * 2, 8))
     grouped: dict[str, dict] = {}
 
     for event in events:
@@ -414,12 +414,16 @@ def build_world_affairs_regions(limit: int = 6) -> list[dict]:
     return summaries[:limit]
 
 
-def build_watchlist_exposures(user_id: int) -> list[dict]:
-    watchlist = load_watchlist(user_id)
+def build_watchlist_exposures(
+    user_id: int,
+    watchlist: list[dict] | None = None,
+    events: list[dict] | None = None,
+) -> list[dict]:
+    watchlist = watchlist if watchlist is not None else load_watchlist(user_id)
     if not watchlist:
         return []
 
-    events = build_world_affairs_monitor(limit=8)
+    events = events if events is not None else build_world_affairs_monitor(limit=8)
     active_themes = {event["theme"]: event for event in events}
     exposures = []
 

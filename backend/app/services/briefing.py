@@ -7,13 +7,23 @@ from app.services.watchlist import load_watchlist
 from app.services.watchlist_intelligence import build_watchlist_intelligence
 
 
-def build_premarket_briefing(model, meta: dict, user_id: int) -> dict:
-    state = build_market_state_summary(model, meta)
-    alerts = build_alerts(model, meta, user_id)
-    headlines = fetch_market_news(limit=5)
-    watchlist = load_watchlist(user_id)
-    watchlist_insights = build_watchlist_intelligence(user_id)
-    catalyst_calendar = build_trader_calendar(state, user_id, limit=5)
+def build_premarket_briefing(
+    model,
+    meta: dict,
+    user_id: int,
+    state: dict | None = None,
+    alerts: list[dict] | None = None,
+    headlines: list[dict] | None = None,
+    watchlist: list[dict] | None = None,
+    watchlist_insights: list[dict] | None = None,
+    catalyst_calendar: list[dict] | None = None,
+) -> dict:
+    state = state if state is not None else build_market_state_summary(model, meta)
+    alerts = alerts if alerts is not None else build_alerts(model, meta, user_id)
+    headlines = headlines if headlines is not None else fetch_market_news(limit=5)
+    watchlist = watchlist if watchlist is not None else load_watchlist(user_id)
+    watchlist_insights = watchlist_insights if watchlist_insights is not None else build_watchlist_intelligence(user_id, state=state)
+    catalyst_calendar = catalyst_calendar if catalyst_calendar is not None else build_trader_calendar(state, user_id, limit=5)
 
     focus_items = []
     if watchlist_insights:

@@ -2,6 +2,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
 import time
+from threading import Lock, Thread
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
@@ -111,14 +112,14 @@ from app.services.shared_workspace import (
     remove_shared_watchlist_item,
     save_shared_briefing_snapshot,
 )
-from app.services.signals import fetch_trending_signals
+from app.services.signals import fetch_signals_for_universe, fetch_trending_signals
 from app.services.state import build_market_state_summary, compute_regime_transitions
 from app.services.story import build_story_briefing
 from app.services.subscriptions import get_tier_config, list_tiers
 from app.services.terminal import compute_regime_history
 from app.services.watchlist import add_watchlist_item, load_watchlist, remove_watchlist_item
-from app.services.watchlist_detail import build_watchlist_detail
-from app.services.watchlist_intelligence import build_watchlist_intelligence
+from app.services.watchlist_detail import build_watchlist_detail_with_data
+from app.services.watchlist_intelligence import build_watchlist_intelligence_with_data
 from app.services.world_affairs import (
     build_watchlist_exposures,
     build_world_affairs_briefing,
@@ -173,6 +174,8 @@ init_db()
 
 MODEL, META = load_artifacts()
 _CACHE: dict[str, tuple[float, object]] = {}
+_USER_WARMING_LOCK = Lock()
+_USER_WARMING: set[int] = set()
 
 
 def _set_session_cookie(response: Response, token: str):
@@ -221,6 +224,36 @@ def _invalidate_user_terminal_cache(user_id: int):
     )
 
 
+def _warm_user_caches_async(user_id: int, first_symbol: str | None = None) -> None:
+    with _USER_WARMING_LOCK:
+        if user_id in _USER_WARMING:
+            return
+        _USER_WARMING.add(user_id)
+
+    def _worker():
+        try:
+            _cached_alerts(user_id)
+            _cached_world_affairs(12)
+            _cached_world_regions(8)
+            _cached_world_briefing(6)
+            _cached_world_timeline(8)
+            _cached_watchlist_exposures(user_id)
+            _cached_watchlist_intelligence(user_id)
+            _cached_watchlist_news(user_id, 8)
+            _cached_calendar_catalysts(user_id, 8)
+            _cached_premarket_briefing(user_id)
+            if first_symbol:
+                _cached_watchlist_detail(user_id, first_symbol)
+        except Exception:
+            # Best-effort warm path should never fail user-facing requests.
+            return
+        finally:
+            with _USER_WARMING_LOCK:
+                _USER_WARMING.discard(user_id)
+
+    Thread(target=_worker, daemon=True).start()
+
+
 def _cached_market_state():
     return _cached(
         "market_state",
@@ -256,7 +289,9 @@ def _cached_market_sectors(limit: int):
 
 
 def _cached_news(limit: int):
-    return _cached(f"news:{limit}", 60, lambda: fetch_market_news(limit=limit))
+    # Fetch once with a shared higher cap, then slice for callers.
+    rows = _cached("news_shared", 45, lambda: fetch_market_news(limit=24))
+    return rows[:limit]
 
 
 def _cached_world_affairs(limit: int):
@@ -264,15 +299,27 @@ def _cached_world_affairs(limit: int):
 
 
 def _cached_world_regions(limit: int):
-    return _cached(f"world_regions:{limit}", 20, lambda: build_world_affairs_regions(limit=limit))
+    return _cached(
+        f"world_regions:{limit}",
+        20,
+        lambda: build_world_affairs_regions(limit=limit, events=_cached_world_affairs(max(limit * 2, 10))),
+    )
 
 
 def _cached_world_briefing(limit: int):
-    return _cached(f"world_briefing:{limit}", 20, lambda: build_world_affairs_briefing(limit=limit))
+    return _cached(
+        f"world_briefing:{limit}",
+        20,
+        lambda: build_world_affairs_briefing(limit=limit, events=_cached_world_affairs(max(limit * 2, 10))),
+    )
 
 
 def _cached_world_timeline(limit: int):
-    return _cached(f"world_timeline:{limit}", 20, lambda: build_narrative_timeline(limit=limit))
+    return _cached(
+        f"world_timeline:{limit}",
+        20,
+        lambda: build_narrative_timeline(limit=limit, events=_cached_world_affairs(max(limit * 2, 10))),
+    )
 
 
 def _cached_signals(limit: int):
@@ -287,19 +334,49 @@ def _watchlist_signature(user_id: int) -> str:
 
 def _cached_watchlist_intelligence(user_id: int):
     signature = _watchlist_signature(user_id)
+    def _build_intelligence():
+        watchlist = load_watchlist(user_id)
+        signals = _cached_watchlist_signals(user_id)
+        news = _cached_news(10)
+        exposures = _cached_watchlist_exposures(user_id)
+        state = _cached_market_state()
+        return build_watchlist_intelligence_with_data(
+            user_id,
+            watchlist=watchlist,
+            state=state,
+            signals=signals,
+            news=news,
+            exposures=exposures,
+        )
     return _cached(
         f"watchlist_intelligence:{user_id}:{signature}",
         30,
-        lambda: build_watchlist_intelligence(user_id),
+        _build_intelligence,
     )
 
 
 def _cached_watchlist_exposures(user_id: int):
     signature = _watchlist_signature(user_id)
+    def _build_exposures():
+        watchlist = load_watchlist(user_id)
+        events = _cached_world_affairs(8)
+        return build_watchlist_exposures(user_id, watchlist=watchlist, events=events)
     return _cached(
         f"watchlist_exposures:{user_id}:{signature}",
         30,
-        lambda: build_watchlist_exposures(user_id),
+        _build_exposures,
+    )
+
+
+def _cached_watchlist_signals(user_id: int):
+    signature = _watchlist_signature(user_id)
+    def _build_signals():
+        watchlist = load_watchlist(user_id)
+        return fetch_signals_for_universe(watchlist) if watchlist else []
+    return _cached(
+        f"watchlist_signals:{user_id}:{signature}",
+        45,
+        _build_signals,
     )
 
 
@@ -319,37 +396,97 @@ def _cached_watchlist_news(user_id: int, limit: int):
 def _cached_watchlist_detail(user_id: int, symbol: str):
     signature = _watchlist_signature(user_id)
     normalized_symbol = symbol.strip().upper()
+    def _build_detail():
+        watchlist = load_watchlist(user_id)
+        state = _cached_market_state()
+        insights = _cached_watchlist_intelligence(user_id)
+        news = _cached_news(12)
+        calendar_events = _cached_calendar_catalysts(user_id, 10)
+        exposures = _cached_watchlist_exposures(user_id)
+        world_events = _cached_world_affairs(8)
+        timeline = _cached_world_timeline(8)
+        return build_watchlist_detail_with_data(
+            user_id,
+            normalized_symbol,
+            MODEL,
+            META,
+            watchlist=watchlist,
+            state=state,
+            insights=insights,
+            news=news,
+            calendar_events=calendar_events,
+            exposures=exposures,
+            world_events=world_events,
+            timeline=timeline,
+        )
     return _cached(
         f"watchlist_detail:{user_id}:{signature}:{normalized_symbol}",
         20,
-        lambda: build_watchlist_detail(user_id, normalized_symbol, MODEL, META),
+        _build_detail,
     )
 
 
 def _cached_alerts(user_id: int):
     signature = _watchlist_signature(user_id)
+    def _build_user_alerts():
+        watchlist = load_watchlist(user_id)
+        prediction = _cached_prediction_latest()
+        news = _cached_news(6)
+        world_events = _cached_world_affairs(6)
+        return build_alerts(
+            MODEL,
+            META,
+            user_id,
+            watchlist=watchlist,
+            prediction=prediction,
+            news=news,
+            world_events=world_events,
+        )
     return _cached(
         f"alerts:{user_id}:{signature}",
         20,
-        lambda: build_alerts(MODEL, META, user_id),
+        _build_user_alerts,
     )
 
 
 def _cached_premarket_briefing(user_id: int):
     signature = _watchlist_signature(user_id)
+    def _build_briefing():
+        state = _cached_market_state()
+        alerts = _cached_alerts(user_id)
+        headlines = _cached_news(5)
+        watchlist = load_watchlist(user_id)
+        watchlist_insights = _cached_watchlist_intelligence(user_id)
+        catalyst_calendar = _cached_calendar_catalysts(user_id, 5)
+        return build_premarket_briefing(
+            MODEL,
+            META,
+            user_id,
+            state=state,
+            alerts=alerts,
+            headlines=headlines,
+            watchlist=watchlist,
+            watchlist_insights=watchlist_insights,
+            catalyst_calendar=catalyst_calendar,
+        )
     return _cached(
         f"briefing_premarket:{user_id}:{signature}",
         45,
-        lambda: build_premarket_briefing(MODEL, META, user_id),
+        _build_briefing,
     )
 
 
 def _cached_calendar_catalysts(user_id: int, limit: int):
     signature = _watchlist_signature(user_id)
+    def _build_calendar():
+        state = _cached_market_state()
+        watchlist = load_watchlist(user_id)
+        news = _cached_news(12)
+        return build_trader_calendar(state, user_id, limit=limit, watchlist=watchlist, news=news)
     return _cached(
         f"calendar:{user_id}:{signature}:{limit}",
         45,
-        lambda: build_trader_calendar(_cached_market_state(), user_id, limit=limit),
+        _build_calendar,
     )
 
 
@@ -382,13 +519,16 @@ def _cached_terminal_bootstrap(current_user: dict):
                 sectors=sectors,
                 news=news,
             )
+            watchlist = watchlist_f.result()
+            first_symbol = watchlist[0]["symbol"] if watchlist else None
+            _warm_user_caches_async(user_id, first_symbol=first_symbol)
             return TerminalBootstrapResponse(
                 me=current_user,
                 prediction=prediction,
                 market_state=market_state,
                 transitions=transitions_f.result(),
                 sectors=sectors,
-                watchlist=watchlist_f.result(),
+                watchlist=watchlist,
                 # Keep bootstrap lean; world timeline is loaded by the world view endpoint.
                 world_timeline=[],
             )

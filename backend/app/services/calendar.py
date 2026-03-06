@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import io
+import time
 from datetime import date, timedelta
 from urllib.error import URLError
 from urllib.parse import urlencode
@@ -18,7 +19,7 @@ from app.services.watchlist import load_watchlist
 
 def _fetch_text(url: str) -> str:
     request = Request(url, headers={"User-Agent": "RegimeTerminal/0.2"})
-    with urlopen(request, timeout=5) as response:
+    with urlopen(request, timeout=2) as response:
         return response.read().decode("utf-8", errors="replace")
 
 
@@ -29,7 +30,10 @@ def _alpha_vantage_earnings(symbols: list[str], limit: int) -> list[dict]:
     events = []
     today = date.today()
     seen = set()
-    for symbol in symbols[:5]:
+    started = time.time()
+    for symbol in symbols[:2]:
+        if time.time() - started > 3.2:
+            break
         params = urlencode(
             {
                 "function": "EARNINGS_CALENDAR",
@@ -80,8 +84,14 @@ def fetch_verified_calendar(symbols: list[str], limit: int = 6) -> list[dict]:
     return []
 
 
-def build_trader_calendar(state: dict, user_id: int, limit: int = 8) -> list[dict]:
-    watchlist = load_watchlist(user_id)
+def build_trader_calendar(
+    state: dict,
+    user_id: int,
+    limit: int = 8,
+    watchlist: list[dict] | None = None,
+    news: list[dict] | None = None,
+) -> list[dict]:
+    watchlist = watchlist if watchlist is not None else load_watchlist(user_id)
     symbols = [item["symbol"] for item in watchlist]
     
     with Session(get_engine()) as session:
@@ -89,7 +99,7 @@ def build_trader_calendar(state: dict, user_id: int, limit: int = 8) -> list[dic
         tier = get_tier_config(user.tier if user else None)
 
     verified = fetch_verified_calendar(symbols, limit=limit) if tier["verified_calendar"] else []
-    session_events = build_catalyst_calendar(state, user_id, limit=limit)
+    session_events = build_catalyst_calendar(state, user_id, limit=limit, watchlist=watchlist, news=news)
 
     merged = list(verified)
     seen = {(item["title"], item["timing"]) for item in merged}

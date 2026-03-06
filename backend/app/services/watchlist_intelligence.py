@@ -61,20 +61,33 @@ def _sector_readthrough(signal: dict | None, exposure: dict | None) -> str:
 
 def build_watchlist_intelligence(user_id: int, state: dict | None = None) -> list[dict]:
     watchlist = load_watchlist(user_id)
+    return build_watchlist_intelligence_with_data(user_id, watchlist=watchlist, state=state)
+
+
+def build_watchlist_intelligence_with_data(
+    user_id: int,
+    watchlist: list[dict] | None = None,
+    state: dict | None = None,
+    signals: list[dict] | None = None,
+    news: list[dict] | None = None,
+    exposures: list[dict] | None = None,
+) -> list[dict]:
+    watchlist = watchlist if watchlist is not None else load_watchlist(user_id)
     if not watchlist:
         return []
 
     state = state or {"regime": "RiskOn"}
-    signals = fetch_signals_for_universe(watchlist)
-    news = fetch_market_news(limit=10)
-    exposures = {item["symbol"]: item for item in build_watchlist_exposures(user_id)}
+    signals = signals if signals is not None else fetch_signals_for_universe(watchlist)
+    news = news if news is not None else fetch_market_news(limit=10)
+    exposure_rows = exposures if exposures is not None else build_watchlist_exposures(user_id, watchlist=watchlist)
+    exposures_by_symbol = {item["symbol"]: item for item in exposure_rows}
     insights = []
 
     for item in watchlist:
         signal = _find_signal(item["symbol"], signals)
         related_news = match_related_news(item["symbol"], item["label"], news, limit=3)
         catalyst_item = related_news[0] if related_news else None
-        exposure = exposures.get(item["symbol"])
+        exposure = exposures_by_symbol.get(item["symbol"])
 
         if signal:
             summary = (

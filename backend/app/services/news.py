@@ -2,6 +2,9 @@ from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 import html
 import re
+import time
+from threading import Lock
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -81,6 +84,10 @@ WATCHLIST_ALIASES = {
     "AMD": ["amd", "advanced micro devices"],
     "GOOGL": ["alphabet", "google", "youtube"],
 }
+
+_NEWS_CACHE_LOCK = Lock()
+_NEWS_CACHE = {"expires_at": 0.0, "items": [], "limit": 0}
+_NEWS_CACHE_TTL_SECONDS = 30.0
 
 
 def _parse_pubdate(raw_value: str | None) -> str:
@@ -285,57 +292,30 @@ def build_watchlist_news(items: list[dict], watchlist: list[dict], limit: int = 
     return matched
 
 
-def fetch_market_news(limit: int = 8) -> list[dict]:
-    all_items: list[dict] = []
-    seen_titles = set()
-    cluster_index: dict[str, int] = {}
-    cluster_signatures: list[str] = []
-    per_source_cap = max(4, min(limit * 2, 14))
-    now_utc = datetime.now(timezone.utc)
+def _fetch_feed_items(source_name: str, feed_url: str, per_source_cap: int, now_utc: datetime) -> list[dict]:
+    items_out: list[dict] = []
+    try:
+        request = Request(feed_url, headers={"User-Agent": "RegimeTerminal/0.2"})
+        with urlopen(request, timeout=2) as response:
+            payload = response.read()
+    except (TimeoutError, URLError, ValueError):
+        return items_out
 
-    for source_name, feed_url in NEWS_FEEDS:
-        source_added = 0
-        try:
-            request = Request(
-                feed_url,
-                headers={"User-Agent": "RegimeTerminal/0.2"},
-            )
-            with urlopen(request, timeout=4) as response:
-                payload = response.read()
-        except (TimeoutError, URLError, ValueError):
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError:
+        return items_out
+
+    for item in root.findall(".//item"):
+        title = _safe_text(item.findtext("title"))
+        if not title:
             continue
-
-        try:
-            root = ET.fromstring(payload)
-        except ET.ParseError:
-            continue
-
-        for item in root.findall(".//item"):
-            title = _safe_text(item.findtext("title"))
-            link = _safe_text(item.findtext("link"))
-            pub_date = _parse_pubdate(item.findtext("pubDate"))
-            summary = _clean_description(item.findtext("description"))
-            title_key = _normalize_title(title)
-            signature = _headline_signature(title)
-
-            if not title or title_key in seen_titles:
-                continue
-
-            seen_titles.add(title_key)
-            cluster_sig = _find_cluster_signature(signature, cluster_signatures)
-            candidate_ts = _clamp_future_timestamp(_parse_timestamp_for_sort(pub_date), now_utc)
-            if cluster_sig and cluster_sig in cluster_index:
-                idx = cluster_index[cluster_sig]
-                canonical = all_items[idx]
-                canonical["_source_cluster"].add(source_name)
-                canonical["_source_count"] = len(canonical["_source_cluster"])
-                # Prefer fresher headline/summary timing for the cluster representative.
-                if candidate_ts > canonical.get("_ts", datetime.min.replace(tzinfo=timezone.utc)):
-                    canonical["published_at"] = candidate_ts.isoformat()
-                    canonical["_ts"] = candidate_ts
-                continue
-
-            article = {
+        link = _safe_text(item.findtext("link"))
+        pub_date = _parse_pubdate(item.findtext("pubDate"))
+        summary = _clean_description(item.findtext("description"))
+        candidate_ts = _clamp_future_timestamp(_parse_timestamp_for_sort(pub_date), now_utc)
+        items_out.append(
+            {
                 "title": title,
                 "source": source_name,
                 "published_at": candidate_ts.isoformat(),
@@ -344,18 +324,62 @@ def fetch_market_news(limit: int = 8) -> list[dict]:
                 "tags": classify_news_tags(title, summary),
                 "_source_key": _source_key(source_name, link),
                 "_ts": candidate_ts,
-                "_signature": signature,
+                "_signature": _headline_signature(title),
                 "_source_cluster": {source_name},
                 "_source_count": 1,
             }
-            all_items.append(article)
-            if signature:
-                cluster_index[signature] = len(all_items) - 1
-                cluster_signatures.append(signature)
-            source_added += 1
+        )
+        if len(items_out) >= per_source_cap:
+            break
+    return items_out
 
-            if source_added >= per_source_cap:
-                break
+
+def fetch_market_news(limit: int = 8) -> list[dict]:
+    now = time.time()
+    with _NEWS_CACHE_LOCK:
+        if (
+            _NEWS_CACHE["items"]
+            and _NEWS_CACHE["expires_at"] > now
+            and int(_NEWS_CACHE["limit"]) >= limit
+        ):
+            return _NEWS_CACHE["items"][:limit]
+
+    all_items: list[dict] = []
+    seen_titles = set()
+    cluster_index: dict[str, int] = {}
+    cluster_signatures: list[str] = []
+    per_source_cap = max(4, min(limit * 2, 14))
+    now_utc = datetime.now(timezone.utc)
+
+    with ThreadPoolExecutor(max_workers=min(6, len(NEWS_FEEDS))) as pool:
+        futures = [
+            pool.submit(_fetch_feed_items, source_name, feed_url, per_source_cap, now_utc)
+            for source_name, feed_url in NEWS_FEEDS
+        ]
+        for future in as_completed(futures):
+            for article in future.result():
+                title = article["title"]
+                source_name = article["source"]
+                title_key = _normalize_title(title)
+                signature = article.get("_signature", "")
+                if not title or title_key in seen_titles:
+                    continue
+                seen_titles.add(title_key)
+                cluster_sig = _find_cluster_signature(signature, cluster_signatures)
+                candidate_ts = article.get("_ts", datetime.min.replace(tzinfo=timezone.utc))
+                if cluster_sig and cluster_sig in cluster_index:
+                    idx = cluster_index[cluster_sig]
+                    canonical = all_items[idx]
+                    canonical["_source_cluster"].add(source_name)
+                    canonical["_source_count"] = len(canonical["_source_cluster"])
+                    if candidate_ts > canonical.get("_ts", datetime.min.replace(tzinfo=timezone.utc)):
+                        canonical["published_at"] = candidate_ts.isoformat()
+                        canonical["_ts"] = candidate_ts
+                    continue
+                all_items.append(article)
+                if signature:
+                    cluster_index[signature] = len(all_items) - 1
+                    cluster_signatures.append(signature)
 
     if not all_items:
         return FALLBACK_NEWS
@@ -406,5 +430,10 @@ def fetch_market_news(limit: int = 8) -> list[dict]:
         article.pop("_source_cluster", None)
         article.pop("_source_count", None)
         article.pop("_score", None)
+
+    with _NEWS_CACHE_LOCK:
+        _NEWS_CACHE["items"] = selected
+        _NEWS_CACHE["limit"] = max(limit, len(selected))
+        _NEWS_CACHE["expires_at"] = now + _NEWS_CACHE_TTL_SECONDS
 
     return selected

@@ -195,12 +195,13 @@ def fetch_signals_for_universe(
     try:
         history = yf.download(
             tickers=tickers,
-            period="6mo",
+            period="3mo",
             interval="1d",
             auto_adjust=True,
             progress=False,
             group_by="column",
             threads=True,
+            timeout=2,
         )
         for ticker, label in universe:
             close_series = _extract_close_series(history, ticker)

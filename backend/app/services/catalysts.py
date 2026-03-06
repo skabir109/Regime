@@ -31,10 +31,16 @@ def _market_session_windows(now: datetime) -> list[dict]:
     ]
 
 
-def build_catalyst_calendar(state: dict, user_id: int, limit: int = 6) -> list[dict]:
+def build_catalyst_calendar(
+    state: dict,
+    user_id: int,
+    limit: int = 6,
+    watchlist: list[dict] | None = None,
+    news: list[dict] | None = None,
+) -> list[dict]:
     now = datetime.now()
-    news = fetch_market_news(limit=12)
-    watchlist = load_watchlist(user_id)
+    news = news if news is not None else fetch_market_news(limit=12)
+    watchlist = watchlist if watchlist is not None else load_watchlist(user_id)
     watchlist_news = build_watchlist_news(news, watchlist, limit=6)
     events = []
 
