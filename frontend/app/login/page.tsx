@@ -137,7 +137,7 @@ export default function LoginPage() {
             <div className="auth-error">{error}</div>
           ) : null}
           {notice ? <div className="auth-notice">{notice}</div> : null}
-          <form onSubmit={handleSubmit} className="auth-form">
+          <form onSubmit={handleSubmit} className="auth-form" method="post" action="/login">
             {mode === "register" ? (
               <input className="auth-input" disabled={loading} name="name" placeholder="Name" />
             ) : null}

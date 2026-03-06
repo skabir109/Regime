@@ -39,7 +39,7 @@
 
         <div id="auth-feedback" class="auth-feedback" hidden></div>
 
-        <form id="login-form" class="auth-form is-active" data-auth-panel="login">
+        <form id="login-form" class="auth-form is-active" data-auth-panel="login" method="post" action="/login">
           <label>
             <span>Email</span>
             <input id="login-email" type="email" autocomplete="email" required />
@@ -53,7 +53,7 @@
           <button type="submit">Login</button>
         </form>
 
-        <form id="register-form" class="auth-form" data-auth-panel="register">
+        <form id="register-form" class="auth-form" data-auth-panel="register" method="post" action="/login">
           <label>
             <span>Name</span>
             <input id="register-name" type="text" autocomplete="name" required />
