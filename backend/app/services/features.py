@@ -1,10 +1,18 @@
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
+from threading import Lock
+import time
 
 from app.config import DATA_PATH
 
 LIVE_SYMBOLS = ["SPY", "GLD", "USO", "GBPUSD=X", "VIX", "TLT", "BITO"]
+_PRICES_CACHE_LOCK = Lock()
+_PRICES_CACHE: dict[str, object] = {
+    "expires_at": 0.0,
+    "data": None,
+}
+_PRICES_TTL_SECONDS = 45.0
 
 def fetch_live_prices() -> pd.DataFrame:
     """Fetch recent daily prices for core universe using yfinance."""
@@ -33,18 +41,29 @@ def fetch_live_prices() -> pd.DataFrame:
 
 
 def load_prices() -> pd.DataFrame:
-    # Try live data first
-    live_df = fetch_live_prices()
-    if not live_df.empty and "SPY" in live_df.columns:
-        return live_df
+    now = time.time()
+    with _PRICES_CACHE_LOCK:
+        cached_data = _PRICES_CACHE.get("data")
+        expires_at = float(_PRICES_CACHE.get("expires_at", 0.0) or 0.0)
+        if isinstance(cached_data, pd.DataFrame) and not cached_data.empty and expires_at > now:
+            return cached_data
 
-    if not DATA_PATH.exists():
-        raise RuntimeError("data/prices_daily.csv not found and live fetch failed.")
+        # Try live data first. Keep lock to prevent concurrent stampedes on cold cache.
+        live_df = fetch_live_prices()
+        if not live_df.empty and "SPY" in live_df.columns:
+            _PRICES_CACHE["data"] = live_df
+            _PRICES_CACHE["expires_at"] = now + _PRICES_TTL_SECONDS
+            return live_df
 
-    prices = pd.read_csv(DATA_PATH, index_col=0, parse_dates=True).sort_index().ffill()
-    if "SPY" not in prices.columns:
-        raise RuntimeError(f"Missing SPY column in CSV. Found: {list(prices.columns)}")
-    return prices
+        if not DATA_PATH.exists():
+            raise RuntimeError("data/prices_daily.csv not found and live fetch failed.")
+
+        prices = pd.read_csv(DATA_PATH, index_col=0, parse_dates=True).sort_index().ffill()
+        if "SPY" not in prices.columns:
+            raise RuntimeError(f"Missing SPY column in CSV. Found: {list(prices.columns)}")
+        _PRICES_CACHE["data"] = prices
+        _PRICES_CACHE["expires_at"] = now + _PRICES_TTL_SECONDS
+        return prices
 
 
 def build_feature_frame(prices: pd.DataFrame) -> pd.DataFrame:

@@ -1,7 +1,5 @@
-from app.services.features import compute_market_panels
 from app.services.inference import predict_latest
 from app.services.news import fetch_market_news
-from app.services.signals import fetch_signals_for_universe, fetch_trending_signals
 from app.services.watchlist import load_watchlist
 from app.services.world_affairs import build_world_affairs_monitor
 
@@ -50,13 +48,7 @@ def build_alert_context(
 def build_alerts_for_watchlist(model, meta: dict, watchlist: list[dict]) -> list[dict]:
     alerts = []
     prediction = predict_latest(model, meta)
-    watch_symbols = {item["symbol"] for item in watchlist}
-    signals = (
-        fetch_signals_for_universe(watchlist, limit=8)
-        if watchlist
-        else fetch_trending_signals(limit=8)
-    )
-    panels = compute_market_panels()
+    watch_symbols = {item["symbol"] for item in watchlist if item.get("symbol")}
     news = fetch_market_news(limit=4)
     world_events = build_world_affairs_monitor(limit=3)
 
@@ -89,31 +81,17 @@ def build_alerts_for_watchlist(model, meta: dict, watchlist: list[dict]) -> list
             }
         )
 
-    for signal in signals:
-        tracked = signal["symbol"] in watch_symbols or not watch_symbols
-        if tracked and signal["stance"] in {"Bullish", "Bearish"}:
-            alerts.append(
-                {
-                    "title": f'{signal["symbol"]} {signal["stance"]} Signal',
-                    "severity": "medium" if signal["stance"] == "Bullish" else "high",
-                    "message": signal["reasons"][0],
-                    "symbol": signal["symbol"],
-                    "details": signal["reasons"],
-                }
-            )
-
-    vix_panel = next((panel for panel in panels if panel["symbol"] == "VIX"), None)
-    if vix_panel and vix_panel["signal"] == "Stress":
+    if watch_symbols and prediction.regime in {"RiskOff", "HighVol"}:
+        focus_symbol = sorted(watch_symbols)[0]
         alerts.append(
             {
-                "title": "VIX Stress Trigger",
-                "severity": "high",
-                "message": "Volatility panel is in stress mode, which can invalidate slower setups.",
-                "symbol": "VIX",
+                "title": f"{focus_symbol} Risk Context",
+                "severity": "medium",
+                "message": "Top-down regime is defensive. Treat single-name momentum with tighter risk controls.",
+                "symbol": focus_symbol,
                 "details": [
-                    f"VIX Price: {vix_panel['price']:.2f}",
-                    f"1D Change: {vix_panel['change_1d'] * 100:.2f}%",
-                    "Stress signal indicates rapid risk repricing.",
+                    f"Current regime: {prediction.regime}",
+                    "Confirm setup quality with broader market participation before sizing up.",
                 ],
             }
         )

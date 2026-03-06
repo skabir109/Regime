@@ -13,6 +13,9 @@ export default function HomePage() {
             <a className="button button-primary" href="/login">
               Sign In
             </a>
+            <a className="button" href="/docs">
+              Documentation
+            </a>
             <a className="button" href="/pricing">
               View Pricing
             </a>
@@ -64,6 +67,7 @@ export default function HomePage() {
         </article>
       </section>
       <div className="legal-links">
+        <a href="/docs">User Guide</a>
         <a href="/about">About</a>
         <a href="/pricing">Pricing</a>
         <a href="/privacy">Privacy</a>

@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import time
 from datetime import datetime, timezone
@@ -221,7 +222,17 @@ def _invalidate_user_terminal_cache(user_id: int):
 
 
 def _cached_market_state():
-    return _cached("market_state", 20, lambda: build_market_state_summary(MODEL, META))
+    return _cached(
+        "market_state",
+        20,
+        lambda: build_market_state_summary(
+            MODEL,
+            META,
+            prediction=_cached_prediction_latest(),
+            sectors=_cached_market_sectors(8),
+            news=_cached_news(6),
+        ),
+    )
 
 
 def _cached_prediction_latest():
@@ -353,18 +364,39 @@ def _cached_workspace_shared(user_id: int):
 def _cached_terminal_bootstrap(current_user: dict):
     user_id = current_user["id"]
     user_tier = str(current_user.get("tier", "free"))
+
+    def _build_bootstrap_payload():
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            prediction_f = pool.submit(_cached_prediction_latest)
+            transitions_f = pool.submit(_cached_regime_transitions, 8)
+            sectors_f = pool.submit(_cached_market_sectors, 8)
+            watchlist_f = pool.submit(load_watchlist, user_id)
+            news_f = pool.submit(_cached_news, 6)
+            prediction = prediction_f.result()
+            sectors = sectors_f.result()
+            news = news_f.result()
+            market_state = build_market_state_summary(
+                MODEL,
+                META,
+                prediction=prediction,
+                sectors=sectors,
+                news=news,
+            )
+            return TerminalBootstrapResponse(
+                me=current_user,
+                prediction=prediction,
+                market_state=market_state,
+                transitions=transitions_f.result(),
+                sectors=sectors,
+                watchlist=watchlist_f.result(),
+                # Keep bootstrap lean; world timeline is loaded by the world view endpoint.
+                world_timeline=[],
+            )
+
     return _cached(
         f"terminal_bootstrap:{user_id}:{user_tier}",
         10,
-        lambda: TerminalBootstrapResponse(
-            me=current_user,
-            prediction=_cached_prediction_latest(),
-            market_state=_cached_market_state(),
-            transitions=_cached_regime_transitions(limit=8),
-            sectors=_cached_market_sectors(8),
-            watchlist=load_watchlist(user_id),
-            world_timeline=_cached_world_timeline(6),
-        ),
+        _build_bootstrap_payload,
     )
 
 

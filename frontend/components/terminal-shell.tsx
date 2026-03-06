@@ -2079,20 +2079,7 @@ export default function TerminalShell() {
     selectedWatchlistSymbol,
   ]);
 
-  useEffect(() => {
-    if (activeView !== "monitor" || !data || !loadedViews.monitor || !data.alerts?.length) {
-      return;
-    }
-    void handleGenerateAlertAI(false);
-  }, [
-    activeView,
-    loadedViews.monitor,
-    data?.marketState.regime,
-    data?.prediction.confidence,
-    data?.alerts?.[0]?.title,
-    data?.alerts?.[0]?.message,
-    selectedAlertKey,
-  ]);
+  // Monitor AI drilldown is generated on explicit user action to keep initial load fast.
 
   useEffect(() => {
     if (activeView !== "world" || !data || !loadedViews.world) {
@@ -3367,7 +3354,7 @@ export default function TerminalShell() {
                 </div>
               </article>
 
-              <article className="nt-panel nt-card nt-world-heatmap-card">
+              <article className="nt-panel nt-card nt-world-heatmap-card nt-settings-wide">
                 <div className="nt-world-map-header">
                   <span className="eyebrow">Geopolitical Heatmap</span>
                   <div className="nt-world-map-meta">

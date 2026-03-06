@@ -1,4 +1,5 @@
 import time
+from threading import Lock
 import numpy as np
 
 from app.services.features import build_feature_frame, compute_market_panels, compute_market_snapshot, load_prices
@@ -9,6 +10,29 @@ from app.services.playbook import get_playbook_for_regime
 from app.services.sectors import fetch_sector_breadth
 
 _SUMMARY_CACHE = {"text": "", "timestamp": 0.0}
+_SUMMARY_REFRESH_LOCK = Lock()
+_SUMMARY_REFRESH_INFLIGHT = False
+
+
+def _refresh_executive_summary_async(regime: str, confidence: float, headlines: list[str]) -> None:
+    global _SUMMARY_REFRESH_INFLIGHT
+    with _SUMMARY_REFRESH_LOCK:
+        if _SUMMARY_REFRESH_INFLIGHT:
+            return
+        _SUMMARY_REFRESH_INFLIGHT = True
+
+    def _worker():
+        global _SUMMARY_REFRESH_INFLIGHT
+        try:
+            text = generate_executive_summary(regime, confidence, headlines)
+            if text:
+                _SUMMARY_CACHE["text"] = text
+                _SUMMARY_CACHE["timestamp"] = time.time()
+        finally:
+            _SUMMARY_REFRESH_INFLIGHT = False
+
+    import threading
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def _tone_from_value(value: float, positive_threshold: float, negative_threshold: float) -> str:
@@ -19,16 +43,16 @@ def _tone_from_value(value: float, positive_threshold: float, negative_threshold
     return "neutral"
 
 
-def build_market_state_summary(model, meta: dict) -> dict:
-    prediction = predict_latest(model, meta)
+def build_market_state_summary(model, meta: dict, prediction=None, sectors=None, news=None) -> dict:
+    prediction = prediction or predict_latest(model, meta)
     prices = load_prices()
     feats = build_feature_frame(prices)
     latest = feats.iloc[-1]
     previous = feats.iloc[-2] if len(feats) > 1 else latest
     panels = compute_market_panels()
     snapshot = compute_market_snapshot()
-    sectors = fetch_sector_breadth(limit=8)
-    news = fetch_market_news(limit=6)
+    sectors = sectors if sectors is not None else fetch_sector_breadth(limit=8)
+    news = news if news is not None else fetch_market_news(limit=6)
 
     bullish_count = len([panel for panel in panels if panel["signal"] in {"Bullish", "Calm"}])
     bearish_count = len([panel for panel in panels if panel["signal"] in {"Bearish", "Stress"}])
@@ -233,13 +257,20 @@ def build_market_state_summary(model, meta: dict) -> dict:
         "Use World Affairs to confirm whether headline flow supports or threatens the current tape.",
     ]
 
-    # Executive Summary with 5-minute cache to avoid redundant slow LLM calls
+    # Executive Summary uses stale-while-revalidate so request path never blocks on LLM/network.
     global _SUMMARY_CACHE
     now_ts = time.time()
-    if not _SUMMARY_CACHE["text"] or (now_ts - _SUMMARY_CACHE["timestamp"] > 300):
-        headline_texts = [n["title"] for n in news]
-        _SUMMARY_CACHE["text"] = generate_executive_summary(prediction.regime, prediction.confidence, headline_texts)
+    headline_texts = [n["title"] for n in news]
+    fallback_exec_summary = (
+        f'{prediction.regime} regime ({prediction.confidence * 100:.0f}% confidence). '
+        "Watch cross-asset confirmation and top headline catalysts before increasing risk."
+    )
+    if not _SUMMARY_CACHE["text"]:
+        _SUMMARY_CACHE["text"] = fallback_exec_summary
         _SUMMARY_CACHE["timestamp"] = now_ts
+        _refresh_executive_summary_async(prediction.regime, prediction.confidence, headline_texts)
+    elif now_ts - _SUMMARY_CACHE["timestamp"] > 300:
+        _refresh_executive_summary_async(prediction.regime, prediction.confidence, headline_texts)
 
     return {
         "regime": prediction.regime,
