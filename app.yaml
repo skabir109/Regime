@@ -6,7 +6,7 @@ services:
       branch: main
       deploy_on_push: true
     source_dir: backend
-    http_port: 8000
+    http_port: 8080
     instance_count: 1
     instance_size_slug: basic-xxs
     envs:
@@ -19,7 +19,14 @@ services:
       - key: LLM_API_KEY
         scope: RUN_TIME
         value: ${LLM_API_KEY}
-    run_command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    health_check:
+      http_path: /health
+      initial_delay_seconds: 15
+      period_seconds: 10
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 3
+    run_command: uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 2
 
   - name: regime-web
     github:
@@ -34,5 +41,15 @@ services:
       - key: NEXT_PUBLIC_API_BASE_URL
         scope: RUN_AND_BUILD_TIME
         value: ${regime-api.PUBLIC_URL}
+      - key: API_BASE_URL
+        scope: RUN_TIME
+        value: ${regime-api.PUBLIC_URL}
+    health_check:
+      http_path: /
+      initial_delay_seconds: 20
+      period_seconds: 10
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 3
     build_command: npm run build
-    run_command: npm run start
+    run_command: npm run start -- -H 0.0.0.0 -p ${PORT}
