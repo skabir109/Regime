@@ -1075,10 +1075,11 @@ function urgencyWeight(value: string) {
 
 function heatColor(intensity: number) {
   const t = Math.max(0, Math.min(1, intensity));
+  // Transition from Cyan (87, 212, 255) to Red (255, 109, 123)
   const r = Math.round(87 + (255 - 87) * t);
   const g = Math.round(212 + (109 - 212) * t);
   const b = Math.round(255 + (123 - 255) * t);
-  const a = (0.28 + t * 0.58).toFixed(2);
+  const a = (0.28 + t * 0.62).toFixed(2);
   return `rgba(${r}, ${g}, ${b}, ${a})`;
 }
 
