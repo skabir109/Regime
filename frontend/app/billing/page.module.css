@@ -1,10 +1,9 @@
 .billingShell {
   min-height: 100vh;
   background:
-    radial-gradient(900px 500px at 10% 0%, rgba(34, 211, 238, 0.18), transparent 55%),
-    radial-gradient(800px 420px at 100% 0%, rgba(236, 72, 153, 0.16), transparent 55%),
-    linear-gradient(180deg, #09121f 0%, #060b13 100%);
-  color: #e6edf7;
+    radial-gradient(950px 500px at 0% 0%, rgba(56, 189, 248, 0.2), transparent 56%),
+    radial-gradient(700px 450px at 100% 0%, rgba(16, 185, 129, 0.17), transparent 55%),
+    linear-gradient(180deg, #08111d 0%, #050a12 100%);
   display: grid;
   place-items: center;
   padding: 24px;
@@ -12,123 +11,123 @@
 
 .billingCard {
   width: 100%;
-  max-width: 860px;
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  background: rgba(8, 15, 27, 0.78);
-  backdrop-filter: blur(8px);
-  border-radius: 18px;
-  box-shadow: 0 32px 90px rgba(0, 0, 0, 0.45);
-  padding: 28px;
+  max-width: 520px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(8, 14, 25, 0.72);
+  padding: 32px;
   display: grid;
-  gap: 18px;
+  gap: 24px;
+  border-radius: 0;
+}
+
+.billingCard:hover {
+  border-color: rgba(56, 189, 248, 0.52);
+  background: rgba(10, 17, 30, 0.82);
 }
 
 .header {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .eyebrow {
-  font-size: 12px;
+  font-size: 0.78rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #67e8f9;
+  color: #8fb7d8;
+  font-family: var(--font-plex-mono), Consolas, monospace;
 }
 
 .header h1 {
   margin: 0;
-  font-size: clamp(1.5rem, 2.8vw, 2rem);
+  font-size: clamp(1.6rem, 2.5vw, 2rem);
+  color: #e5edf8;
 }
 
 .header p {
   margin: 0;
-  color: #9fb1c7;
+  color: #c1d2e3;
+  line-height: 1.6;
+  font-size: 0.94rem;
 }
 
 .controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
 }
 
 .planButton {
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  background: rgba(15, 23, 42, 0.75);
-  color: #dbe7f7;
-  border-radius: 10px;
-  padding: 10px 14px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(8, 14, 25, 0.72);
+  color: #dce4ed;
+  border-radius: 0;
+  padding: 14px;
   cursor: pointer;
+  text-align: center;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.planButton:hover {
+  border-color: rgba(56, 189, 248, 0.52);
+  background: rgba(10, 17, 30, 0.82);
 }
 
 .planButtonActive {
-  border-color: rgba(34, 211, 238, 0.65);
-  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.4) inset;
+  border-color: #57d4ff;
+  background: rgba(87, 212, 255, 0.08);
+  box-shadow: 0 0 0 1px rgba(87, 212, 255, 0.1) inset;
 }
 
 .stripeWrap {
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: rgba(8, 13, 23, 0.72);
-  border-radius: 12px;
-  padding: 16px;
+  min-height: 180px;
 }
 
 .paymentActions {
-  margin-top: 14px;
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.actionButton {
-  border: 1px solid rgba(56, 189, 248, 0.45);
-  background: linear-gradient(90deg, rgba(56, 189, 248, 0.25), rgba(34, 197, 94, 0.2));
-  color: #e9f8ff;
-  border-radius: 10px;
-  padding: 10px 14px;
-  cursor: pointer;
-}
-
-.actionButton[disabled] {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.secondaryButton {
-  border: 1px solid rgba(148, 163, 184, 0.35);
-  background: transparent;
-  color: #dbe7f7;
-  border-radius: 10px;
-  padding: 10px 14px;
-  cursor: pointer;
+  margin-top: 12px;
 }
 
 .message {
-  margin: 0;
-  font-size: 0.95rem;
-  color: #f0f6ff;
+  margin: 16px 0 0;
+  font-size: 0.9rem;
+  color: #dce4ed;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  text-align: center;
 }
 
 .error {
-  color: #fca5a5;
+  color: #ff6d7b;
+  border-color: rgba(255, 109, 123, 0.2);
+  background: rgba(255, 109, 123, 0.05);
 }
 
 .links {
   display: flex;
-  gap: 12px;
-  font-size: 0.92rem;
+  justify-content: center;
+  gap: 20px;
+  font-size: 0.88rem;
+  margin-top: 8px;
 }
 
 .links a {
-  color: #93c5fd;
+  color: #9ba9b8;
   text-decoration: none;
+  transition: color 0.2s ease;
 }
 
 .links a:hover {
+  color: #dce4ed;
   text-decoration: underline;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 560px) {
   .billingCard {
-    padding: 18px;
+    padding: 24px;
+    border-radius: 0;
+    min-height: 100vh;
+    border: 0;
   }
 }

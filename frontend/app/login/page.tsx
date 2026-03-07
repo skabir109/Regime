@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { SignedIn, SignedOut, useAuth, useClerk, useSignIn, useSignUp } from "@clerk/nextjs";
 import { apiFetch } from "@/lib/api";
 
@@ -96,7 +96,6 @@ function ClerkSessionBridge({ onError, onFailure }: ClerkBridgeProps) {
 
 function ClerkLoginPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const { signOut } = useClerk();
   const { isLoaded: signInLoaded, signIn, setActive: setSignInActive } = useSignIn();
   const { isLoaded: signUpLoaded, signUp, setActive: setSignUpActive } = useSignUp();
@@ -108,7 +107,7 @@ function ClerkLoginPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [allowAutoBridge, setAllowAutoBridge] = useState(searchParams.get("bridge") === "1");
+  const [allowAutoBridge, setAllowAutoBridge] = useState(false);
 
   const isLogin = mode === "login";
   const processingLabel = isLogin ? "Signing you in..." : "Creating your account...";
@@ -118,6 +117,13 @@ function ClerkLoginPage() {
     router.prefetch("/terminal");
     router.prefetch("/plans");
   }, [router]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("bridge") === "1") {
+      setAllowAutoBridge(true);
+    }
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -222,6 +228,11 @@ function ClerkLoginPage() {
         <div className="auth-form-panel">
           {clerkEnabled ? (
             <>
+              <div
+                id="clerk-captcha"
+                className="auth-captcha"
+                style={{ display: mode === "register" ? "block" : "none" }}
+              />
               <SignedOut>
                 <div className="auth-toggle" role="tablist" aria-label="Authentication mode">
                   <button

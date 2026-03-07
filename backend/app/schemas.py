@@ -216,6 +216,7 @@ class SecurityHealthResponse(BaseModel):
     session_samesite: str
     csrf_secret_configured: bool
     redis: dict[str, object]
+    security_events: dict[str, int] = {}
     warnings: list[str] = []
 
 

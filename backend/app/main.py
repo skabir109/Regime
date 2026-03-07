@@ -246,12 +246,37 @@ async def add_security_headers(request: Request, call_next):
     )
     return response
 
+
+@app.middleware("http")
+async def capture_security_status_codes(request: Request, call_next):
+    response = await call_next(request)
+    if response.status_code in {401, 403, 429}:
+        _record_security_metric(f"http_{response.status_code}")
+    return response
+
 init_db()
 
 MODEL, META = load_artifacts()
 _CACHE: dict[str, tuple[float, object]] = {}
 _USER_WARMING_LOCK = Lock()
 _USER_WARMING: set[int] = set()
+_SECURITY_METRICS_LOCK = Lock()
+_SECURITY_METRICS: dict[str, int] = {
+    "http_401": 0,
+    "http_403": 0,
+    "http_429": 0,
+    "quota_denied": 0,
+}
+
+
+def _record_security_metric(name: str, amount: int = 1) -> None:
+    with _SECURITY_METRICS_LOCK:
+        _SECURITY_METRICS[name] = int(_SECURITY_METRICS.get(name, 0)) + amount
+
+
+def _security_metric_snapshot() -> dict[str, int]:
+    with _SECURITY_METRICS_LOCK:
+        return dict(_SECURITY_METRICS)
 
 
 def _set_session_cookie(response: Response, token: str):
@@ -995,6 +1020,7 @@ def health_security():
         session_samesite=SESSION_SAMESITE,
         csrf_secret_configured=csrf_secret_configured,
         redis=redis_status,
+        security_events=_security_metric_snapshot(),
         warnings=warnings,
     )
 
@@ -1340,6 +1366,7 @@ def ai_analyze(
             enforce_burst_limit(current_user["id"], "ai_analyze", int(tier.get("ai_minute_limit", 0)))
             usage = enforce_daily_limit(current_user["id"], "ai_analyze", int(tier.get("ai_daily_limit", 0)))
         except APILimitError as exc:
+            _record_security_metric("quota_denied")
             raise HTTPException(status_code=429, detail=str(exc)) from exc
 
         response = generate_analysis(payload)

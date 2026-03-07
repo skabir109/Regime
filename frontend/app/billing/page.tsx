@@ -105,11 +105,43 @@ function BillingContent() {
         appearance: {
           theme: "night",
           variables: {
-            colorPrimary: "#22d3ee",
-            colorBackground: "#0b1220",
-            colorText: "#e6edf7",
-            colorDanger: "#ef4444",
-            borderRadius: "10px",
+            fontFamily: "var(--font-inter), system-ui, -apple-system, sans-serif",
+            colorPrimary: "#57d4ff",
+            colorBackground: "#05080d",
+            colorText: "#dce4ed",
+            colorDanger: "#ff6d7b",
+            colorTextSecondary: "#9ba9b8",
+            colorIcon: "#57d4ff",
+            borderRadius: "0",
+            spacingGridRow: "20px",
+          },
+          rules: {
+            ".Input": {
+              border: "1px solid rgba(140, 160, 180, 0.22)",
+              backgroundColor: "rgba(255, 255, 255, 0.02)",
+              padding: "12px 14px",
+            },
+            ".Input:focus": {
+              border: "1px solid #77cbec",
+              boxShadow: "0 0 0 1px rgba(77, 226, 255, 0.18)",
+            },
+            ".Label": {
+              fontSize: "0.78rem",
+              fontWeight: "500",
+              textTransform: "uppercase",
+              letterSpacing: "0.12em",
+              marginBottom: "8px",
+              color: "#9ba9b8",
+              fontFamily: "var(--font-plex-mono), Consolas, monospace",
+            },
+            ".Tab": {
+              border: "1px solid rgba(140, 160, 180, 0.22)",
+              backgroundColor: "rgba(255, 255, 255, 0.02)",
+            },
+            ".Tab--selected": {
+              border: "1px solid #57d4ff",
+              backgroundColor: "rgba(87, 212, 255, 0.08)",
+            },
           },
         },
       });
@@ -176,8 +208,8 @@ function BillingContent() {
       <section className={styles.billingCard}>
         <header className={styles.header}>
           <span className={styles.eyebrow}>Regime Billing</span>
-          <h1>Complete Your Plan Upgrade</h1>
-          <p>Secure payment powered by Stripe. Your tier updates automatically via webhook after confirmation.</p>
+          <h1>Complete Your Upgrade</h1>
+          <p>Secure payment via Stripe. Your workspace tier updates automatically after confirmation.</p>
         </header>
 
         <div className={styles.controls}>
@@ -186,14 +218,14 @@ function BillingContent() {
             onClick={() => setTier("pro")}
             type="button"
           >
-            Pro
+            Pro Tier
           </button>
           <button
             className={`${styles.planButton} ${tier === "desk" ? styles.planButtonActive : ""}`}
             onClick={() => setTier("desk")}
             type="button"
           >
-            Desk
+            Desk Tier
           </button>
         </div>
 
@@ -204,11 +236,8 @@ function BillingContent() {
             <div ref={mountNodeRef} />
             {!loading && !error && mounted ? (
               <div className={styles.paymentActions}>
-                <button className={styles.actionButton} disabled={submitting} type="submit">
+                <button className="button button-primary" disabled={submitting} type="submit" style={{ width: '100%' }}>
                   {submitting ? "Processing..." : `Confirm ${tier.toUpperCase()} Plan`}
-                </button>
-                <button className={styles.secondaryButton} onClick={() => (window.location.href = "/app")} type="button">
-                  Back to App
                 </button>
               </div>
             ) : null}
@@ -217,8 +246,8 @@ function BillingContent() {
         </div>
 
         <div className={styles.links}>
-          <Link href="/app">Back to App</Link>
-          <a href="/pricing">Pricing</a>
+          <Link href="/app">Back to Terminal</Link>
+          <Link href="/pricing">View All Plans</Link>
         </div>
       </section>
     </main>
