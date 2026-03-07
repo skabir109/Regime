@@ -2,14 +2,26 @@ import base64
 import hashlib
 import hmac
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import HTTPException, Request
+import jwt
 import requests
 from sqlmodel import Session, select
 
-from app.config import SESSION_COOKIE_NAME, SESSION_DURATION_HOURS, SUPABASE_ANON_KEY, SUPABASE_URL
+from app.config import (
+    CLERK_API_URL,
+    CLERK_AUDIENCE,
+    CLERK_ISSUER,
+    CLERK_JWKS_URL,
+    CLERK_SECRET_KEY,
+    SESSION_COOKIE_NAME,
+    SESSION_DURATION_HOURS,
+    SUPABASE_ANON_KEY,
+    SUPABASE_URL,
+)
 from app.services.db import get_engine, init_db
 from app.schemas import User, DBSession
 from app.services.subscriptions import DEFAULT_TIER, normalize_tier
@@ -17,6 +29,8 @@ from app.services.subscriptions import DEFAULT_TIER, normalize_tier
 
 PBKDF2_ITERATIONS = 310000
 _SCHEMA_READY = False
+_CLERK_JWKS_CLIENT: jwt.PyJWKClient | None = None
+_CLERK_JWKS_READY_AT = 0.0
 
 
 def _user_payload(user: User) -> dict:
@@ -66,6 +80,10 @@ def _hash_session_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def _hash_one_time_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def register_user(email: str, password: str, name: str) -> dict:
     _ensure_schema_ready()
     normalized_email = email.strip().lower()
@@ -77,6 +95,7 @@ def register_user(email: str, password: str, name: str) -> dict:
         raise ValueError("Name is required.")
 
     verification_token = secrets.token_urlsafe(32)
+    verification_token_hash = _hash_one_time_token(verification_token)
 
     with Session(get_engine()) as session:
         existing = session.exec(select(User).where(User.email == normalized_email)).first()
@@ -88,7 +107,9 @@ def register_user(email: str, password: str, name: str) -> dict:
             name=name.strip(),
             password_hash=hash_password(password),
             tier=DEFAULT_TIER,
-            verification_token=verification_token,
+            verification_token=None,
+            verification_token_hash=verification_token_hash,
+            verification_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=48),
             created_at=datetime.now(timezone.utc),
             tier_selection_required=True,
         )
@@ -143,6 +164,11 @@ def _default_name_for_email(email: str) -> str:
     return " ".join(part.capitalize() for part in local_part.split())
 
 
+def _full_name(first_name: str | None, last_name: str | None) -> str:
+    parts = [part.strip() for part in [first_name or "", last_name or ""] if part and part.strip()]
+    return " ".join(parts).strip()
+
+
 def _upsert_supabase_user(profile: dict) -> dict:
     _ensure_schema_ready()
     email = (profile.get("email") or "").strip().lower()
@@ -183,6 +209,95 @@ def _upsert_supabase_user(profile: dict) -> dict:
         return _user_payload(user)
 
 
+def _get_clerk_jwks_client() -> jwt.PyJWKClient:
+    global _CLERK_JWKS_CLIENT, _CLERK_JWKS_READY_AT
+    if not CLERK_JWKS_URL:
+        raise ValueError("Clerk is not configured (missing CLERK_JWKS_URL or CLERK_ISSUER).")
+    now = time.time()
+    if _CLERK_JWKS_CLIENT and now < _CLERK_JWKS_READY_AT:
+        return _CLERK_JWKS_CLIENT
+    _CLERK_JWKS_CLIENT = jwt.PyJWKClient(CLERK_JWKS_URL)
+    _CLERK_JWKS_READY_AT = now + 300
+    return _CLERK_JWKS_CLIENT
+
+
+def _decode_clerk_session_token(session_token: str) -> dict:
+    token = session_token.strip()
+    if not token:
+        raise ValueError("Clerk session token is required.")
+    signing_key = _get_clerk_jwks_client().get_signing_key_from_jwt(token)
+    decode_kwargs: dict = {
+        "algorithms": ["RS256"],
+        "options": {"verify_aud": bool(CLERK_AUDIENCE), "verify_iss": bool(CLERK_ISSUER)},
+    }
+    if CLERK_AUDIENCE:
+        decode_kwargs["audience"] = CLERK_AUDIENCE
+    if CLERK_ISSUER:
+        decode_kwargs["issuer"] = CLERK_ISSUER
+    return jwt.decode(token, signing_key.key, **decode_kwargs)
+
+
+def _fetch_clerk_user(user_id: str) -> dict:
+    if not CLERK_SECRET_KEY:
+        return {}
+    response = requests.get(
+        f"{CLERK_API_URL}/v1/users/{user_id}",
+        headers={"Authorization": f"Bearer {CLERK_SECRET_KEY}"},
+        timeout=10,
+    )
+    if response.status_code >= 400:
+        return {}
+    return response.json()
+
+
+def _upsert_clerk_user(claims: dict) -> dict:
+    _ensure_schema_ready()
+    clerk_user_id = str(claims.get("sub") or "").strip()
+    if not clerk_user_id:
+        raise ValueError("Invalid Clerk token: missing subject.")
+
+    clerk_user = _fetch_clerk_user(clerk_user_id)
+    fallback_email = ""
+    if clerk_user:
+        addresses = clerk_user.get("email_addresses") or []
+        if addresses:
+            fallback_email = (addresses[0].get("email_address") or "").strip().lower()
+
+    email = (
+        (claims.get("email") or claims.get("email_address") or "").strip().lower()
+        or fallback_email
+    )
+    if not email:
+        raise ValueError("Clerk session does not include an email address.")
+
+    name = (
+        _full_name(clerk_user.get("first_name"), clerk_user.get("last_name"))
+        if clerk_user
+        else ""
+    ) or (claims.get("name") or "").strip() or _default_name_for_email(email)
+
+    with Session(get_engine()) as session:
+        user = session.exec(select(User).where(User.email == email)).first()
+        if user:
+            user.name = name
+            user.is_verified = True
+        else:
+            user = User(
+                email=email,
+                name=name,
+                password_hash=hash_password(secrets.token_urlsafe(32)),
+                tier=DEFAULT_TIER,
+                created_at=datetime.now(timezone.utc),
+                is_verified=True,
+                verification_token=None,
+                tier_selection_required=True,
+            )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return _user_payload(user)
+
+
 def authenticate_supabase_access_token(access_token: str) -> dict:
     token = access_token.strip()
     if not token:
@@ -202,6 +317,11 @@ def authenticate_supabase_access_token(access_token: str) -> dict:
         raise ValueError("Supabase session could not be verified.")
 
     return _upsert_supabase_user(response.json())
+
+
+def authenticate_clerk_session_token(session_token: str) -> dict:
+    claims = _decode_clerk_session_token(session_token)
+    return _upsert_clerk_user(claims)
 
 
 def create_session(user_id: int) -> str:
@@ -265,12 +385,28 @@ def get_user_from_session(token: str | None) -> dict | None:
 
 def verify_email(token: str) -> bool:
     _ensure_schema_ready()
+    token_hash = _hash_one_time_token(token.strip())
     with Session(get_engine()) as session:
-        user = session.exec(select(User).where(User.verification_token == token)).first()
+        user = session.exec(select(User).where(User.verification_token_hash == token_hash)).first()
+        if not user:
+            # Legacy fallback for pre-hash token rows.
+            user = session.exec(select(User).where(User.verification_token == token)).first()
         if not user:
             raise ValueError("Invalid or expired verification token.")
+
+        expires_at = user.verification_token_expires_at
+        if expires_at:
+            if isinstance(expires_at, str):
+                expires_at = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at <= datetime.now(timezone.utc):
+                raise ValueError("Invalid or expired verification token.")
+
         user.is_verified = True
         user.verification_token = None
+        user.verification_token_hash = None
+        user.verification_token_expires_at = None
         session.add(user)
         session.commit()
         return True
@@ -284,7 +420,8 @@ def generate_password_reset_token(email: str) -> str:
             return "" 
         
         reset_token = secrets.token_urlsafe(32)
-        user.reset_token = reset_token
+        user.reset_token = None
+        user.reset_token_hash = _hash_one_time_token(reset_token)
         user.reset_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
         session.add(user)
         session.commit()
@@ -295,8 +432,12 @@ def reset_password(token: str, new_password: str) -> bool:
     if len(new_password) < 8:
         raise ValueError("Password must be at least 8 characters.")
     
+    token_hash = _hash_one_time_token(token.strip())
     with Session(get_engine()) as session:
-        user = session.exec(select(User).where(User.reset_token == token)).first()
+        user = session.exec(select(User).where(User.reset_token_hash == token_hash)).first()
+        if not user:
+            # Legacy fallback for pre-hash token rows.
+            user = session.exec(select(User).where(User.reset_token == token)).first()
         if not user:
             raise ValueError("Invalid reset token.")
             
@@ -312,8 +453,12 @@ def reset_password(token: str, new_password: str) -> bool:
             
         user.password_hash = hash_password(new_password)
         user.reset_token = None
+        user.reset_token_hash = None
         user.reset_token_expires_at = None
         session.add(user)
+        active_sessions = session.exec(select(DBSession).where(DBSession.user_id == user.id)).all()
+        for db_session in active_sessions:
+            session.delete(db_session)
         session.commit()
         return True
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { loadStripe, type Stripe, type StripeElements, type StripePaymentElement } from "@stripe/stripe-js";
@@ -18,7 +18,7 @@ type BillingIntentResponse = {
 
 const stripeKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || "";
 
-export default function BillingPage() {
+function BillingContent() {
   const searchParams = useSearchParams();
   const initialTier = (searchParams.get("tier") || "pro").toLowerCase() === "desk" ? "desk" : "pro";
   const [tier, setTier] = useState<Tier>(initialTier);
@@ -222,5 +222,13 @@ export default function BillingPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+export default function BillingPage() {
+  return (
+    <Suspense fallback={<div>Loading billing details...</div>}>
+      <BillingContent />
+    </Suspense>
   );
 }

@@ -7,8 +7,6 @@ from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -18,12 +16,13 @@ from app.config import (
     APP_TITLE,
     APP_VERSION,
     CORS_ORIGINS,
+    CSRF_COOKIE_NAME,
+    CSRF_HEADER_NAME,
     DATA_PATH,
     SESSION_COOKIE_NAME,
     SESSION_DURATION_HOURS,
     SESSION_SAMESITE,
     SESSION_SECURE,
-    STATIC_DIR,
     REGIME_BILLING_TOKEN,
 )
 from app.schemas import (
@@ -35,6 +34,8 @@ from app.schemas import (
     CatalystEvent,
     DeliveryPreferences,
     DeliveryPreferencesRequest,
+    DeliveryChannelTestRequest,
+    DeliveryChannelTestResult,
     ForgotPasswordRequest,
     HealthResponse,
     LoginRequest,
@@ -61,6 +62,7 @@ from app.schemas import (
     BillingCheckoutRequest,
     BillingIntentResponse,
     BillingSessionResponse,
+    ClerkSessionRequest,
     SubscriptionTier,
     SubscriptionUpdateRequest,
     SupabaseSessionRequest,
@@ -81,9 +83,9 @@ from app.schemas import (
     RegisterRequest,
 )
 from app.services.alerts import build_alerts
-from sqlmodel import Session, select, SQLModel
-from app.services.db import get_engine, init_db
+from app.services.db import init_db
 from app.services.auth import (
+    authenticate_clerk_session_token,
     authenticate_supabase_access_token,
     authenticate_user,
     create_session,
@@ -98,7 +100,10 @@ from app.services.auth import (
     verify_email,
 )
 from app.services.audit import log_audit_event
+from app.services.api_protection import APILimitError, enforce_burst_limit, enforce_daily_limit
+from app.services.csrf import allowed_origin_set, extract_origin_from_referer, generate_csrf_token, validate_csrf_token
 from app.services.delivery import send_global_macro_briefing
+from app.services.delivery import send_test_channel_message
 from app.services.briefing import build_premarket_briefing
 from app.services.briefing_history import load_briefing_history
 from app.services.billing import (
@@ -151,6 +156,23 @@ app = FastAPI(
 limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+_CSRF_EXEMPT_PATHS = {
+    "/auth/register",
+    "/auth/login",
+    "/auth/clerk/session",
+    "/auth/supabase/session",
+    "/auth/forgot-password",
+    "/auth/reset-password",
+    "/auth/verify-email",
+    "/billing/stripe/webhook",
+}
+_ALLOWED_ORIGINS = allowed_origin_set()
+if not _ALLOWED_ORIGINS:
+    _ALLOWED_ORIGINS = {
+        origin.lower()
+        for origin in CORS_ORIGINS
+        if "://" in origin
+    }
 
 @app.middleware("http")
 async def limit_request_size(request: Request, call_next):
@@ -171,16 +193,58 @@ app.add_middleware(
 )
 
 @app.middleware("http")
+async def csrf_protect(request: Request, call_next):
+    method = request.method.upper()
+    if method in {"GET", "HEAD", "OPTIONS"}:
+        return await call_next(request)
+
+    path = request.url.path
+    session_token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not session_token:
+        return await call_next(request)
+    if path in _CSRF_EXEMPT_PATHS:
+        return await call_next(request)
+
+    # Origin/referer checks reduce cross-site request forgery risk on cookie-authenticated mutations.
+    origin = (request.headers.get("origin") or "").strip().lower()
+    referer_origin = extract_origin_from_referer(request.headers.get("referer"))
+    if origin and origin not in _ALLOWED_ORIGINS:
+        raise HTTPException(status_code=403, detail="Origin is not allowed.")
+    if not origin and referer_origin and referer_origin not in _ALLOWED_ORIGINS:
+        raise HTTPException(status_code=403, detail="Referer is not allowed.")
+
+    csrf_cookie = request.cookies.get(CSRF_COOKIE_NAME)
+    csrf_header = request.headers.get(CSRF_HEADER_NAME)
+    if not csrf_cookie or not csrf_header:
+        raise HTTPException(status_code=403, detail="Missing CSRF token.")
+    if csrf_cookie != csrf_header:
+        raise HTTPException(status_code=403, detail="CSRF token mismatch.")
+    if not validate_csrf_token(csrf_cookie):
+        raise HTTPException(status_code=403, detail="Invalid CSRF token.")
+
+    return await call_next(request)
+
+@app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
-    response.headers["X-XSS-Protection"] = "1; mode=block"
-    response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self' https:; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "frame-ancestors 'none'; "
+        "form-action 'self'"
+    )
     return response
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 init_db()
 
 MODEL, META = load_artifacts()
@@ -199,6 +263,23 @@ def _set_session_cookie(response: Response, token: str):
         max_age=SESSION_DURATION_HOURS * 3600,
         path="/",
     )
+
+
+def _set_csrf_cookie(response: Response, token: str):
+    response.set_cookie(
+        key=CSRF_COOKIE_NAME,
+        value=token,
+        httponly=False,
+        secure=SESSION_SECURE,
+        samesite=SESSION_SAMESITE,
+        max_age=SESSION_DURATION_HOURS * 3600,
+        path="/",
+    )
+
+
+def _clear_auth_cookies(response: Response):
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    response.delete_cookie(CSRF_COOKIE_NAME, path="/")
 
 def _require_paid_tier(current_user: dict, feature_name: str) -> None:
     tier = get_tier_config(current_user.get("tier"))
@@ -574,18 +655,8 @@ def _cached_metadata():
 
 
 @app.get("/", tags=["system"])
-def root(request: Request):
-    if token := request.cookies.get(SESSION_COOKIE_NAME):
-        from app.services.auth import get_user_from_session
-
-        if get_user_from_session(token):
-            return FileResponse(STATIC_DIR / "index.html")
-    return FileResponse(STATIC_DIR / "login.html")
-
-
-@app.get("/login", tags=["system"])
-def login_page():
-    return FileResponse(STATIC_DIR / "login.html")
+def root():
+    return {"name": APP_TITLE, "version": APP_VERSION, "status": "api"}
 
 
 @app.post("/auth/register", response_model=UserResponse, tags=["auth"])
@@ -594,7 +665,9 @@ def auth_register(request: Request, payload: RegisterRequest, response: Response
     try:
         user = register_user(payload.email, payload.password, payload.name)
         token = create_session(user["id"])
+        csrf_token = generate_csrf_token()
         _set_session_cookie(response, token)
+        _set_csrf_cookie(response, csrf_token)
         log_audit_event("user_registered", user["id"], {"email": payload.email, "ip": request.client.host if request.client else None})
         return user
     except Exception as exc:
@@ -608,7 +681,9 @@ def auth_login(request: Request, payload: LoginRequest, response: Response):
     try:
         user = authenticate_user(payload.email, payload.password)
         token = create_session(user["id"])
+        csrf_token = generate_csrf_token()
         _set_session_cookie(response, token)
+        _set_csrf_cookie(response, csrf_token)
         log_audit_event("user_logged_in", user["id"], {"email": payload.email, "ip": request.client.host if request.client else None})
         return user
     except Exception as exc:
@@ -622,7 +697,9 @@ def auth_supabase_session(request: Request, payload: SupabaseSessionRequest, res
     try:
         user = authenticate_supabase_access_token(payload.access_token)
         token = create_session(user["id"])
+        csrf_token = generate_csrf_token()
         _set_session_cookie(response, token)
+        _set_csrf_cookie(response, csrf_token)
         log_audit_event(
             "user_logged_in_supabase",
             user["id"],
@@ -638,11 +715,43 @@ def auth_supabase_session(request: Request, payload: SupabaseSessionRequest, res
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
+@app.post("/auth/clerk/session", response_model=UserResponse, tags=["auth"])
+@limiter.limit("20/minute")
+def auth_clerk_session(request: Request, payload: ClerkSessionRequest, response: Response):
+    try:
+        user = authenticate_clerk_session_token(payload.session_token)
+        token = create_session(user["id"])
+        csrf_token = generate_csrf_token()
+        _set_session_cookie(response, token)
+        _set_csrf_cookie(response, csrf_token)
+        log_audit_event(
+            "user_logged_in_clerk",
+            user["id"],
+            {"email": user["email"], "ip": request.client.host if request.client else None},
+        )
+        return user
+    except Exception as exc:
+        log_audit_event(
+            "user_login_clerk_failed",
+            None,
+            {"error": str(exc), "ip": request.client.host if request.client else None},
+        )
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
 @app.post("/auth/logout", tags=["auth"])
+@limiter.limit("20/minute")
 def auth_logout(request: Request, response: Response):
     delete_session(request.cookies.get(SESSION_COOKIE_NAME))
-    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    _clear_auth_cookies(response)
     return {"status": "logged_out"}
+
+
+@app.get("/auth/csrf", tags=["auth"])
+def auth_csrf(response: Response, current_user: dict = Depends(current_user_or_401)):
+    token = generate_csrf_token()
+    _set_csrf_cookie(response, token)
+    return {"csrf_token": token, "user_id": current_user["id"]}
 
 @app.post("/auth/verify-email", tags=["auth"])
 def auth_verify_email(payload: VerifyEmailRequest):
@@ -787,7 +896,9 @@ def workspace_shared(current_user: dict = Depends(current_user_or_401)):
 
 
 @app.post("/workspace/shared", response_model=SharedWorkspace, tags=["workspace"])
+@limiter.limit("20/minute")
 def workspace_shared_create(
+    request: Request,
     payload: SharedWorkspaceRequest,
     current_user: dict = Depends(current_user_or_401),
 ):
@@ -800,7 +911,9 @@ def workspace_shared_create(
 
 
 @app.post("/workspace/shared/join", response_model=SharedWorkspace, tags=["workspace"])
+@limiter.limit("20/minute")
 def workspace_shared_join(
+    request: Request,
     payload: SharedWorkspaceJoinRequest,
     current_user: dict = Depends(current_user_or_401),
 ):
@@ -813,7 +926,9 @@ def workspace_shared_join(
 
 
 @app.post("/workspace/shared/watchlist", response_model=SharedWorkspace, tags=["workspace"])
+@limiter.limit("30/minute")
 def workspace_shared_watchlist_add(
+    request: Request,
     payload: WatchlistRequest,
     current_user: dict = Depends(current_user_or_401),
 ):
@@ -826,7 +941,8 @@ def workspace_shared_watchlist_add(
 
 
 @app.delete("/workspace/shared/watchlist/{symbol}", response_model=SharedWorkspace, tags=["workspace"])
-def workspace_shared_watchlist_remove(symbol: str, current_user: dict = Depends(current_user_or_401)):
+@limiter.limit("30/minute")
+def workspace_shared_watchlist_remove(request: Request, symbol: str, current_user: dict = Depends(current_user_or_401)):
     try:
         workspace = remove_shared_watchlist_item(current_user["id"], symbol)
         _invalidate_user_terminal_cache(current_user["id"])
@@ -836,7 +952,9 @@ def workspace_shared_watchlist_remove(symbol: str, current_user: dict = Depends(
 
 
 @app.post("/workspace/shared/notes", response_model=SharedWorkspace, tags=["workspace"])
+@limiter.limit("30/minute")
 def workspace_shared_note_add(
+    request: Request,
     payload: SharedWorkspaceNoteRequest,
     current_user: dict = Depends(current_user_or_401),
 ):
@@ -849,18 +967,14 @@ def workspace_shared_note_add(
 
 
 @app.post("/workspace/shared/briefing-snapshot", response_model=SharedWorkspace, tags=["workspace"])
-def workspace_shared_briefing_snapshot(current_user: dict = Depends(current_user_or_401)):
+@limiter.limit("15/minute")
+def workspace_shared_briefing_snapshot(request: Request, current_user: dict = Depends(current_user_or_401)):
     try:
         workspace = save_shared_briefing_snapshot(current_user["id"], MODEL, META)
         _invalidate_user_terminal_cache(current_user["id"])
         return workspace
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.get("/terminal", tags=["system"])
-def terminal_page(current_user: dict = Depends(current_user_or_401)):
-    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/app", tags=["system"])
@@ -1083,7 +1197,9 @@ def settings_delivery(current_user: dict = Depends(current_user_or_401)):
 
 
 @app.put("/settings/delivery", response_model=DeliveryPreferences, tags=["terminal"])
+@limiter.limit("20/minute")
 def settings_delivery_update(
+    request: Request,
     payload: DeliveryPreferencesRequest,
     current_user: dict = Depends(current_user_or_401),
 ):
@@ -1102,6 +1218,32 @@ def settings_delivery_update(
         )
         _invalidate_user_terminal_cache(current_user["id"])
         return result
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/settings/delivery/test/slack", response_model=DeliveryChannelTestResult, tags=["terminal"])
+@limiter.limit("10/minute")
+def settings_delivery_test_slack(
+    request: Request,
+    payload: DeliveryChannelTestRequest,
+    current_user: dict = Depends(current_user_or_401),
+):
+    try:
+        return send_test_channel_message(current_user["id"], "slack", payload.webhook_url)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/settings/delivery/test/discord", response_model=DeliveryChannelTestResult, tags=["terminal"])
+@limiter.limit("10/minute")
+def settings_delivery_test_discord(
+    request: Request,
+    payload: DeliveryChannelTestRequest,
+    current_user: dict = Depends(current_user_or_401),
+):
+    try:
+        return send_test_channel_message(current_user["id"], "discord", payload.webhook_url)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1189,7 +1331,14 @@ def ai_analyze(
     current_user: dict = Depends(current_user_or_401),
 ):
     try:
+        tier = get_tier_config(current_user.get("tier"))
         _require_paid_tier(current_user, "AI analysis")
+        try:
+            enforce_burst_limit(current_user["id"], "ai_analyze", int(tier.get("ai_minute_limit", 0)))
+            usage = enforce_daily_limit(current_user["id"], "ai_analyze", int(tier.get("ai_daily_limit", 0)))
+        except APILimitError as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
+
         response = generate_analysis(payload)
         log_audit_event(
             "ai_analyze",
@@ -1199,6 +1348,8 @@ def ai_analyze(
                 "attempts": response.attempts,
                 "validator_passed": response.validator_passed,
                 "validation_error_count": len(response.validation_errors),
+                "daily_usage_used": usage["used"],
+                "daily_usage_remaining": usage["remaining"],
                 "ip": request.client.host if request.client else None,
             },
         )

@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from sqlmodel import Session, select
 from app.services.db import get_engine
 from app.schemas import DeliveryPreferencesDB, User
 from app.services.subscriptions import get_tier_config
+from app.services.secrets import decrypt_secret, encrypt_secret
 
 
 DEFAULT_PREFERENCES = {
@@ -23,14 +25,17 @@ def get_delivery_preferences(user_id: int) -> dict:
         prefs = session.get(DeliveryPreferencesDB, user_id)
         if not prefs:
             return DEFAULT_PREFERENCES
+        webhook_url = decrypt_secret(getattr(prefs, "webhook_url_enc", None)) or (prefs.webhook_url or "")
+        slack_url = decrypt_secret(getattr(prefs, "slack_webhook_url_enc", None)) or (prefs.slack_webhook_url or "")
+        discord_url = decrypt_secret(getattr(prefs, "discord_webhook_url_enc", None)) or (prefs.discord_webhook_url or "")
         return {
             "email_enabled": prefs.email_enabled,
             "webhook_enabled": prefs.webhook_enabled,
-            "webhook_url": prefs.webhook_url or "",
+            "webhook_url": webhook_url,
             "slack_enabled": prefs.slack_enabled,
-            "slack_webhook_url": prefs.slack_webhook_url or "",
+            "slack_webhook_url": slack_url,
             "discord_enabled": prefs.discord_enabled,
-            "discord_webhook_url": prefs.discord_webhook_url or "",
+            "discord_webhook_url": discord_url,
             "cadence": prefs.cadence,
             "timezone": prefs.timezone or "local",
         }
@@ -52,6 +57,20 @@ def save_delivery_preferences(
     cleaned_slack_url = (slack_webhook_url or "").strip()
     cleaned_discord_url = (discord_webhook_url or "").strip()
     cleaned_timezone = (timezone_name or "local").strip() or "local"
+
+    if cleaned_slack_url:
+        parsed = urlparse(cleaned_slack_url)
+        if parsed.netloc not in {"hooks.slack.com"}:
+            raise ValueError("Slack webhook URL must use hooks.slack.com.")
+    if cleaned_discord_url:
+        parsed = urlparse(cleaned_discord_url)
+        if parsed.netloc not in {"discord.com", "discordapp.com"}:
+            raise ValueError("Discord webhook URL must use discord.com.")
+
+    enc_webhook = encrypt_secret(cleaned_url)
+    enc_slack = encrypt_secret(cleaned_slack_url)
+    enc_discord = encrypt_secret(cleaned_discord_url)
+
     with Session(get_engine()) as session:
         user = session.get(User, user_id)
         if not user:
@@ -66,11 +85,14 @@ def save_delivery_preferences(
         if prefs:
             prefs.email_enabled = email_enabled
             prefs.webhook_enabled = webhook_enabled
-            prefs.webhook_url = cleaned_url
+            prefs.webhook_url = None
+            prefs.webhook_url_enc = enc_webhook or None
             prefs.slack_enabled = slack_enabled
-            prefs.slack_webhook_url = cleaned_slack_url
+            prefs.slack_webhook_url = None
+            prefs.slack_webhook_url_enc = enc_slack or None
             prefs.discord_enabled = discord_enabled
-            prefs.discord_webhook_url = cleaned_discord_url
+            prefs.discord_webhook_url = None
+            prefs.discord_webhook_url_enc = enc_discord or None
             prefs.cadence = cadence
             prefs.timezone = cleaned_timezone
             prefs.updated_at = datetime.now(timezone.utc)
@@ -80,11 +102,14 @@ def save_delivery_preferences(
                 user_id=user_id,
                 email_enabled=email_enabled,
                 webhook_enabled=webhook_enabled,
-                webhook_url=cleaned_url,
+                webhook_url=None,
+                webhook_url_enc=enc_webhook or None,
                 slack_enabled=slack_enabled,
-                slack_webhook_url=cleaned_slack_url,
+                slack_webhook_url=None,
+                slack_webhook_url_enc=enc_slack or None,
                 discord_enabled=discord_enabled,
-                discord_webhook_url=cleaned_discord_url,
+                discord_webhook_url=None,
+                discord_webhook_url_enc=enc_discord or None,
                 cadence=cadence,
                 timezone=cleaned_timezone,
                 updated_at=datetime.now(timezone.utc)

@@ -12,10 +12,6 @@ from app.services.db import get_engine
 from app.schemas import User
 from app.services.subscriptions import get_tier_config
 from app.services.world_affairs import build_world_affairs_briefing
-from app.config import (
-    APP_TITLE,
-    # Add these to config later if needed, for now use env placeholders
-)
 import os
 
 def _send_http_post(url: str, payload: dict, channel_name: str, user_id: int) -> str:
@@ -132,3 +128,26 @@ def send_global_macro_briefing(user_id: int) -> dict:
         "discord_status": discord_status,
         "delivery_channels": channels,
     }
+
+
+def send_test_channel_message(user_id: int, channel: str, webhook_url: str | None = None) -> dict:
+    message = "Regime test notification: delivery channel is configured correctly."
+    preferences = get_delivery_preferences(user_id)
+    selected_channel = channel.strip().lower()
+    url = (webhook_url or "").strip()
+
+    if selected_channel == "slack":
+        target = url or preferences.get("slack_webhook_url", "").strip()
+        if not target:
+            raise ValueError("Slack webhook URL is not configured.")
+        status = _send_slack_notification(target, message, user_id)
+        return {"channel": "slack", "status": status}
+
+    if selected_channel == "discord":
+        target = url or preferences.get("discord_webhook_url", "").strip()
+        if not target:
+            raise ValueError("Discord webhook URL is not configured.")
+        status = _send_discord_notification(target, message, user_id)
+        return {"channel": "discord", "status": status}
+
+    raise ValueError("Unsupported test channel.")

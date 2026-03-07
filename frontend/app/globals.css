@@ -3,10 +3,10 @@
   --bg-deep: #05080d;
   --panel: rgba(10, 16, 24, 0.9);
   --panel-strong: rgba(13, 20, 29, 0.96);
-  --line: rgba(120, 138, 158, 0.15);
-  --line-bright: rgba(119, 203, 236, 0.28);
+  --line: rgba(140, 160, 180, 0.22);
+  --line-bright: rgba(119, 203, 236, 0.32);
   --text: #dce4ed;
-  --muted: #8796a7;
+  --muted: #9ba9b8;
   --cyan: #57d4ff;
   --green: #81f2a4;
   --amber: #f2b36a;
@@ -26,7 +26,26 @@ body {
     radial-gradient(circle at left 30%, rgba(242, 179, 106, 0.05), transparent 18%),
     linear-gradient(180deg, var(--bg) 0%, var(--bg-deep) 100%);
   color: var(--text);
-  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  font-family: var(--font-inter), system-ui, -apple-system, sans-serif;
+}
+
+.font-mono,
+.status-chip,
+.eyebrow,
+.nt-clock,
+.nt-symbol,
+.nt-status-chip,
+.nt-confidence small,
+.nt-state-grid span,
+.metric-positive,
+.metric-negative,
+.metric-neutral,
+.nt-context-grid span,
+.landing-brand,
+.auth-brand,
+.terminal-wordmark,
+.nt-wordmark {
+  font-family: var(--font-plex-mono), Consolas, monospace;
 }
 
 a {
@@ -62,16 +81,23 @@ select {
   background: rgba(255, 255, 255, 0.015);
   color: var(--text);
   cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.1s ease;
 }
 
 .button:hover {
-  border-color: var(--line-bright);
-  background: rgba(87, 212, 255, 0.05);
+  border-color: rgba(87, 212, 255, 0.4);
+  background: rgba(87, 212, 255, 0.08);
+  transform: translateY(-1px);
 }
 
 .button-primary {
   border-color: rgba(87, 212, 255, 0.36);
   background: rgba(87, 212, 255, 0.07);
+}
+
+.button-primary:hover {
+  border-color: rgba(87, 212, 255, 0.6);
+  background: rgba(87, 212, 255, 0.15);
 }
 
 .landing-shell {
@@ -2650,3 +2676,14 @@ select.nt-select:hover {
 }
 
 /* High intensity pulse logic would ideally be applied via JS class but we can add a general hover effect for now */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

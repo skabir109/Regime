@@ -87,6 +87,18 @@ def _run_lightweight_migrations(engine) -> None:
                 "ALTER TABLE users ADD COLUMN tier_selection_required BOOLEAN NOT NULL DEFAULT 0"
             )
 
+    if "verification_token_hash" not in existing:
+        statements.append("ALTER TABLE users ADD COLUMN verification_token_hash VARCHAR(128) NULL")
+
+    if "verification_token_expires_at" not in existing:
+        if dialect == "postgresql":
+            statements.append("ALTER TABLE users ADD COLUMN verification_token_expires_at TIMESTAMPTZ NULL")
+        else:
+            statements.append("ALTER TABLE users ADD COLUMN verification_token_expires_at DATETIME NULL")
+
+    if "reset_token_hash" not in existing:
+        statements.append("ALTER TABLE users ADD COLUMN reset_token_hash VARCHAR(128) NULL")
+
     # Legacy schema compatibility: older bootstrap scripts created this as INTEGER.
     if dialect == "postgresql" and "is_verified" in user_columns:
         is_verified_type = str(user_columns["is_verified"]["type"]).lower()
@@ -130,6 +142,18 @@ def _run_lightweight_migrations(engine) -> None:
     if "timezone" not in delivery_existing:
         delivery_statements.append(
             "ALTER TABLE delivery_preferences ADD COLUMN timezone VARCHAR(64) NOT NULL DEFAULT 'local'"
+        )
+    if "webhook_url_enc" not in delivery_existing:
+        delivery_statements.append(
+            "ALTER TABLE delivery_preferences ADD COLUMN webhook_url_enc VARCHAR(1024) NULL"
+        )
+    if "slack_webhook_url_enc" not in delivery_existing:
+        delivery_statements.append(
+            "ALTER TABLE delivery_preferences ADD COLUMN slack_webhook_url_enc VARCHAR(1024) NULL"
+        )
+    if "discord_webhook_url_enc" not in delivery_existing:
+        delivery_statements.append(
+            "ALTER TABLE delivery_preferences ADD COLUMN discord_webhook_url_enc VARCHAR(1024) NULL"
         )
 
     # Legacy schema compatibility: older bootstrap scripts created boolean flags as INTEGER.

@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field, validator
 from sqlmodel import SQLModel, Field as SQLField, Relationship
+from sqlalchemy import UniqueConstraint
 from urllib.parse import urlparse
 import re
 
@@ -48,7 +49,10 @@ class User(SQLModel, table=True):
     created_at: datetime = SQLField(default_factory=datetime.utcnow)
     is_verified: bool = SQLField(default=False)
     verification_token: Optional[str] = None
+    verification_token_hash: Optional[str] = None
+    verification_token_expires_at: Optional[datetime] = None
     reset_token: Optional[str] = None
+    reset_token_hash: Optional[str] = None
     reset_token_expires_at: Optional[datetime] = None
     failed_login_attempts: int = SQLField(default=0)
     locked_until: Optional[datetime] = None
@@ -100,10 +104,13 @@ class DeliveryPreferencesDB(SQLModel, table=True):
     email_enabled: bool = SQLField(default=False)
     webhook_enabled: bool = SQLField(default=False)
     webhook_url: Optional[str] = None
+    webhook_url_enc: Optional[str] = None
     slack_enabled: bool = SQLField(default=False)
     slack_webhook_url: Optional[str] = None
+    slack_webhook_url_enc: Optional[str] = None
     discord_enabled: bool = SQLField(default=False)
     discord_webhook_url: Optional[str] = None
+    discord_webhook_url_enc: Optional[str] = None
     cadence: str = SQLField(default="premarket")
     timezone: str = SQLField(default="local")
     updated_at: datetime = SQLField(default_factory=datetime.utcnow)
@@ -118,6 +125,20 @@ class AuditLogDB(SQLModel, table=True):
     user_id: Optional[int] = SQLField(default=None, foreign_key="users.id", ondelete="SET NULL")
     details: str
     created_at: datetime = SQLField(default_factory=datetime.utcnow)
+
+
+class APIUsageCounterDB(SQLModel, table=True):
+    __tablename__ = "api_usage_counters"
+    __table_args__ = (
+        UniqueConstraint("user_id", "endpoint", "bucket", name="uq_api_usage_counter"),
+    )
+
+    id: Optional[int] = SQLField(default=None, primary_key=True)
+    user_id: int = SQLField(foreign_key="users.id", ondelete="CASCADE", index=True)
+    endpoint: str = SQLField(index=True)
+    bucket: str = SQLField(index=True)
+    count: int = SQLField(default=0)
+    updated_at: datetime = SQLField(default_factory=datetime.utcnow)
 
 
 class SharedWorkspaceDB(SQLModel, table=True):
@@ -399,6 +420,17 @@ class SupabaseSessionRequest(BaseModel):
             raise ValueError("Access token is required.")
         return cleaned
 
+
+class ClerkSessionRequest(BaseModel):
+    session_token: str
+
+    @validator("session_token")
+    def sanitize_session_token(cls, v):
+        cleaned = clean_text(v, max_len=8192)
+        if not cleaned:
+            raise ValueError("Session token is required.")
+        return cleaned
+
 class ForgotPasswordRequest(BaseModel):
     email: str
 
@@ -615,6 +647,19 @@ class DeliveryPreferencesRequest(BaseModel):
     @validator("timezone")
     def sanitize_timezone(cls, v):
         return clean_text(v or "local", max_len=64) or "local"
+
+
+class DeliveryChannelTestRequest(BaseModel):
+    webhook_url: str | None = None
+
+    @validator("webhook_url")
+    def sanitize_webhook_url(cls, v):
+        return validate_webhook_url(v)
+
+
+class DeliveryChannelTestResult(BaseModel):
+    channel: str
+    status: str
 
 
 class BriefingDeliveryResult(BaseModel):

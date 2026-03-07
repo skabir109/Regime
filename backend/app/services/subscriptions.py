@@ -7,6 +7,8 @@ TIERS = {
         "verified_calendar": False,
         "webhook_delivery": False,
         "briefing_history_limit": 7,
+        "ai_daily_limit": 0,
+        "ai_minute_limit": 0,
     },
     "pro": {
         "label": "Pro",
@@ -16,6 +18,8 @@ TIERS = {
         "verified_calendar": True,
         "webhook_delivery": True,
         "briefing_history_limit": 30,
+        "ai_daily_limit": 120,
+        "ai_minute_limit": 10,
     },
     "desk": {
         "label": "Desk",
@@ -25,6 +29,8 @@ TIERS = {
         "verified_calendar": True,
         "webhook_delivery": True,
         "briefing_history_limit": 90,
+        "ai_daily_limit": 400,
+        "ai_minute_limit": 25,
     },
 }
 

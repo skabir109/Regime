@@ -1,5 +1,7 @@
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "/api";
 export const BACKEND_BASE_URL = process.env.API_BASE_URL || "http://127.0.0.1:8000";
+const CSRF_COOKIE_NAME = process.env.NEXT_PUBLIC_CSRF_COOKIE_NAME || "regime_csrf";
+const CSRF_HEADER_NAME = process.env.NEXT_PUBLIC_CSRF_HEADER_NAME || "x-csrf-token";
 
 type ApiFetchInit = RequestInit & {
   ttlMs?: number;
@@ -8,6 +10,18 @@ type ApiFetchInit = RequestInit & {
 
 const GET_CACHE = new Map<string, { expiresAt: number; data: unknown }>();
 const INFLIGHT_GETS = new Map<string, Promise<unknown>>();
+
+function readCookie(name: string): string {
+  if (typeof document === "undefined") return "";
+  const encoded = encodeURIComponent(name);
+  const parts = document.cookie.split("; ");
+  for (const row of parts) {
+    if (row.startsWith(`${encoded}=`)) {
+      return decodeURIComponent(row.slice(encoded.length + 1));
+    }
+  }
+  return "";
+}
 
 export async function apiFetch<T>(path: string, init?: ApiFetchInit): Promise<T> {
   const method = (init?.method || "GET").toUpperCase();
@@ -27,12 +41,18 @@ export async function apiFetch<T>(path: string, init?: ApiFetchInit): Promise<T>
     }
   }
 
+  const csrfToken =
+    method !== "GET" && method !== "HEAD" && method !== "OPTIONS"
+      ? readCookie(CSRF_COOKIE_NAME)
+      : "";
+
   const requestPromise = fetch(`${API_BASE_URL}${path}`, {
     ...init,
     method,
     credentials: "include",
     headers: {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(csrfToken ? { [CSRF_HEADER_NAME]: csrfToken } : {}),
       ...(init?.headers || {}),
     },
     cache: "no-store",
