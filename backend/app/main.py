@@ -24,6 +24,7 @@ from app.config import (
     SESSION_SAMESITE,
     SESSION_SECURE,
     STATIC_DIR,
+    REGIME_BILLING_TOKEN,
 )
 from app.schemas import (
     AIAnalyzeRequest,
@@ -57,6 +58,9 @@ from app.schemas import (
     SharedWorkspaceRequest,
     SignalCard,
     StoryBriefing,
+    BillingCheckoutRequest,
+    BillingIntentResponse,
+    BillingSessionResponse,
     SubscriptionTier,
     SubscriptionUpdateRequest,
     SupabaseSessionRequest,
@@ -90,12 +94,19 @@ from app.services.auth import (
     reset_password,
     update_user_tier,
     register_user,
+    mark_tier_selection_complete,
     verify_email,
 )
 from app.services.audit import log_audit_event
 from app.services.delivery import send_global_macro_briefing
 from app.services.briefing import build_premarket_briefing
 from app.services.briefing_history import load_briefing_history
+from app.services.billing import (
+    create_checkout_session,
+    create_customer_portal_session,
+    create_subscription_payment_intent,
+    process_stripe_webhook,
+)
 from app.services.calendar import build_trader_calendar
 from app.services.inference import predict_from_features, predict_latest
 from app.services.features import compute_market_panels, compute_market_snapshot
@@ -188,6 +199,14 @@ def _set_session_cookie(response: Response, token: str):
         max_age=SESSION_DURATION_HOURS * 3600,
         path="/",
     )
+
+def _require_paid_tier(current_user: dict, feature_name: str) -> None:
+    tier = get_tier_config(current_user.get("tier"))
+    if tier["tier"] == "free":
+        raise HTTPException(
+            status_code=402,
+            detail=f"{feature_name} requires a paid plan.",
+        )
 
 
 def _cached(key: str, ttl_seconds: int, factory):
@@ -664,18 +683,100 @@ def billing_tiers(current_user: dict = Depends(current_user_or_401)):
     return list_tiers()
 
 
+@app.post("/billing/checkout/session", response_model=BillingSessionResponse, tags=["billing"])
+@limiter.limit("10/minute")
+def billing_checkout_session(
+    request: Request,
+    payload: BillingCheckoutRequest,
+    current_user: dict = Depends(current_user_or_401),
+):
+    try:
+        url = create_checkout_session(current_user["id"], payload.tier)
+        return {"url": url}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/billing/portal/session", response_model=BillingSessionResponse, tags=["billing"])
+@limiter.limit("10/minute")
+def billing_portal_session(request: Request, current_user: dict = Depends(current_user_or_401)):
+    try:
+        url = create_customer_portal_session(current_user["id"])
+        return {"url": url}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/billing/subscription/intent", response_model=BillingIntentResponse, tags=["billing"])
+@limiter.limit("10/minute")
+def billing_subscription_intent(
+    request: Request,
+    payload: BillingCheckoutRequest,
+    current_user: dict = Depends(current_user_or_401),
+):
+    try:
+        intent = create_subscription_payment_intent(current_user["id"], payload.tier)
+        return intent
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/billing/select-free", response_model=UserResponse, tags=["billing"])
+@limiter.limit("10/minute")
+def billing_select_free(request: Request, current_user: dict = Depends(current_user_or_401)):
+    try:
+        update_user_tier(current_user["id"], "free", allow_upgrade=True)
+        user = mark_tier_selection_complete(current_user["id"])
+        _invalidate_user_terminal_cache(current_user["id"])
+        return user
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/billing/stripe/webhook", tags=["billing"])
+@limiter.limit("120/minute")
+async def billing_stripe_webhook(request: Request):
+    payload = await request.body()
+    signature = request.headers.get("stripe-signature")
+    try:
+        result = process_stripe_webhook(payload, signature)
+        return {"status": "ok", **result}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.put("/billing/tier", response_model=UserResponse, tags=["billing"])
 def billing_tier_update(
+    request: Request,
     payload: SubscriptionUpdateRequest,
     current_user: dict = Depends(current_user_or_401),
 ):
     try:
-        user = update_user_tier(current_user["id"], payload.tier)
+        current_tier = get_tier_config(current_user["tier"])["tier"]
+        requested_tier = get_tier_config(payload.tier)["tier"]
+
+        # Prevent client-side self-upgrades: only allow free-tier downgrade by users.
+        billing_token = request.headers.get("x-billing-token", "").strip()
+        has_billing_auth = bool(REGIME_BILLING_TOKEN) and billing_token == REGIME_BILLING_TOKEN
+        if not has_billing_auth and requested_tier not in {"free", current_tier}:
+            raise HTTPException(
+                status_code=402,
+                detail="Tier upgrades require billing confirmation.",
+            )
+
+        user = update_user_tier(
+            current_user["id"],
+            requested_tier,
+            allow_upgrade=has_billing_auth,
+        )
+        user = mark_tier_selection_complete(current_user["id"])
         _invalidate_user_terminal_cache(current_user["id"])
         return {
             **user,
             "tier": get_tier_config(user["tier"])["tier"],
         }
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -1006,17 +1107,26 @@ def settings_delivery_update(
 
 
 @app.post("/delivery/global-macro/send", response_model=BriefingDeliveryResult, tags=["terminal"])
-def delivery_global_macro_send(current_user: dict = Depends(current_user_or_401)):
+@limiter.limit("5/minute")
+def delivery_global_macro_send(request: Request, current_user: dict = Depends(current_user_or_401)):
     try:
+        _require_paid_tier(current_user, "Global macro delivery")
         return send_global_macro_briefing(current_user["id"])
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/watchlist", response_model=list[WatchlistItem], tags=["terminal"])
-def watchlist_add(request: WatchlistRequest, current_user: dict = Depends(current_user_or_401)):
+@limiter.limit("30/minute")
+def watchlist_add(
+    request: Request,
+    payload: WatchlistRequest,
+    current_user: dict = Depends(current_user_or_401),
+):
     try:
-        watchlist_items = add_watchlist_item(current_user["id"], request.symbol, request.label)
+        watchlist_items = add_watchlist_item(current_user["id"], payload.symbol, payload.label)
         _invalidate_user_terminal_cache(current_user["id"])
         return watchlist_items
     except Exception as exc:
@@ -1024,7 +1134,8 @@ def watchlist_add(request: WatchlistRequest, current_user: dict = Depends(curren
 
 
 @app.delete("/watchlist/{symbol}", response_model=list[WatchlistItem], tags=["terminal"])
-def watchlist_remove(symbol: str, current_user: dict = Depends(current_user_or_401)):
+@limiter.limit("30/minute")
+def watchlist_remove(request: Request, symbol: str, current_user: dict = Depends(current_user_or_401)):
     result = remove_watchlist_item(current_user["id"], symbol)
     _invalidate_user_terminal_cache(current_user["id"])
     return result
@@ -1042,14 +1153,19 @@ def alerts(request: Request, current_user: dict = Depends(current_user_or_401)):
 
 
 @app.post("/predict", response_model=PredictResponse, tags=["inference"])
-def predict(request: PredictRequest, current_user: dict = Depends(current_user_or_401)):
+@limiter.limit("45/minute")
+def predict(
+    request: Request,
+    payload: PredictRequest,
+    current_user: dict = Depends(current_user_or_401),
+):
     try:
-        if request.features is None:
+        if payload.features is None:
             return predict_latest(MODEL, META)
         return predict_from_features(
             MODEL,
             META,
-            request.features,
+            payload.features,
             source="custom_payload",
         )
     except Exception as exc:
@@ -1057,7 +1173,8 @@ def predict(request: PredictRequest, current_user: dict = Depends(current_user_o
 
 
 @app.post("/predict/latest", response_model=PredictResponse, tags=["inference"])
-def predict_latest_endpoint(current_user: dict = Depends(current_user_or_401)):
+@limiter.limit("60/minute")
+def predict_latest_endpoint(request: Request, current_user: dict = Depends(current_user_or_401)):
     try:
         return _cached_prediction_latest()
     except Exception as exc:
@@ -1065,13 +1182,14 @@ def predict_latest_endpoint(current_user: dict = Depends(current_user_or_401)):
 
 
 @app.post("/ai/analyze", response_model=AIAnalyzeResponse, tags=["ai"])
-@limiter.limit("20/minute")
+@limiter.limit("10/minute")
 def ai_analyze(
     request: Request,
     payload: AIAnalyzeRequest,
     current_user: dict = Depends(current_user_or_401),
 ):
     try:
+        _require_paid_tier(current_user, "AI analysis")
         response = generate_analysis(payload)
         log_audit_event(
             "ai_analyze",
@@ -1085,5 +1203,7 @@ def ai_analyze(
             },
         )
         return response
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

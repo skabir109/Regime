@@ -19,6 +19,17 @@ PBKDF2_ITERATIONS = 310000
 _SCHEMA_READY = False
 
 
+def _user_payload(user: User) -> dict:
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "tier": normalize_tier(user.tier),
+        "created_at": user.created_at,
+        "tier_selection_required": bool(getattr(user, "tier_selection_required", False)),
+    }
+
+
 def _ensure_schema_ready() -> None:
     global _SCHEMA_READY
     if _SCHEMA_READY:
@@ -78,12 +89,13 @@ def register_user(email: str, password: str, name: str) -> dict:
             password_hash=hash_password(password),
             tier=DEFAULT_TIER,
             verification_token=verification_token,
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.now(timezone.utc),
+            tier_selection_required=True,
         )
         session.add(user)
         session.commit()
         session.refresh(user)
-        return user.dict()
+        return _user_payload(user)
 
 
 def authenticate_user(email: str, password: str) -> dict:
@@ -121,13 +133,7 @@ def authenticate_user(email: str, password: str) -> dict:
         session.add(user)
         session.commit()
         
-        return {
-            "id": user.id,
-            "email": user.email,
-            "name": user.name,
-            "tier": normalize_tier(user.tier),
-            "created_at": user.created_at,
-        }
+        return _user_payload(user)
 
 
 def _default_name_for_email(email: str) -> str:
@@ -167,21 +173,14 @@ def _upsert_supabase_user(profile: dict) -> dict:
                 tier=DEFAULT_TIER,
                 created_at=created_at,
                 is_verified=True,
-                verification_token=None
+                verification_token=None,
+                tier_selection_required=True,
             )
         
         session.add(user)
         session.commit()
         session.refresh(user)
-
-        return {
-            "id": user.id,
-            "email": user.email,
-            "name": user.name,
-            "tier": normalize_tier(user.tier),
-            "created_at": user.created_at,
-            "is_verified": user.is_verified,
-        }
+        return _user_payload(user)
 
 
 def authenticate_supabase_access_token(access_token: str) -> dict:
@@ -260,14 +259,9 @@ def get_user_from_session(token: str | None) -> dict | None:
             return None
             
         user = db_session.user
-        return {
-            "id": user.id,
-            "email": user.email,
-            "name": user.name,
-            "tier": normalize_tier(user.tier),
-            "created_at": user.created_at,
-            "is_verified": user.is_verified,
-        }
+        payload = _user_payload(user)
+        payload["is_verified"] = user.is_verified
+        return payload
 
 def verify_email(token: str) -> bool:
     _ensure_schema_ready()
@@ -324,24 +318,34 @@ def reset_password(token: str, new_password: str) -> bool:
         return True
 
 
-def update_user_tier(user_id: int, tier: str) -> dict:
+def update_user_tier(user_id: int, tier: str, *, allow_upgrade: bool = False) -> dict:
     _ensure_schema_ready()
     normalized = normalize_tier(tier)
     with Session(get_engine()) as session:
         user = session.get(User, user_id)
         if not user:
             raise ValueError("User not found.")
+        current = normalize_tier(user.tier)
+        if normalized != current and normalized != DEFAULT_TIER and not allow_upgrade:
+            raise ValueError("Tier upgrades require billing confirmation.")
         user.tier = normalized
         session.add(user)
         session.commit()
         session.refresh(user)
-        return {
-            "id": user.id,
-            "email": user.email,
-            "name": user.name,
-            "tier": normalize_tier(user.tier),
-            "created_at": user.created_at,
-        }
+        return _user_payload(user)
+
+
+def mark_tier_selection_complete(user_id: int) -> dict:
+    _ensure_schema_ready()
+    with Session(get_engine()) as session:
+        user = session.get(User, user_id)
+        if not user:
+            raise ValueError("User not found.")
+        user.tier_selection_required = False
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return _user_payload(user)
 
 
 def current_user_or_401(request: Request) -> dict:

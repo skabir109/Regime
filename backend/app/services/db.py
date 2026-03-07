@@ -56,6 +56,7 @@ def _run_lightweight_migrations(engine) -> None:
         return
 
     existing = {column["name"] for column in inspector.get_columns("users")}
+    user_columns = {column["name"]: column for column in inspector.get_columns("users")}
     statements: list[str] = []
     dialect = engine.dialect.name
 
@@ -70,6 +71,34 @@ def _run_lightweight_migrations(engine) -> None:
         else:
             statements.append("ALTER TABLE users ADD COLUMN locked_until DATETIME NULL")
 
+    if "stripe_customer_id" not in existing:
+        statements.append("ALTER TABLE users ADD COLUMN stripe_customer_id VARCHAR(128) NULL")
+
+    if "stripe_subscription_id" not in existing:
+        statements.append("ALTER TABLE users ADD COLUMN stripe_subscription_id VARCHAR(128) NULL")
+
+    if "tier_selection_required" not in existing:
+        if dialect == "postgresql":
+            statements.append(
+                "ALTER TABLE users ADD COLUMN tier_selection_required BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        else:
+            statements.append(
+                "ALTER TABLE users ADD COLUMN tier_selection_required BOOLEAN NOT NULL DEFAULT 0"
+            )
+
+    # Legacy schema compatibility: older bootstrap scripts created this as INTEGER.
+    if dialect == "postgresql" and "is_verified" in user_columns:
+        is_verified_type = str(user_columns["is_verified"]["type"]).lower()
+        if "bool" not in is_verified_type:
+            statements.extend(
+                [
+                    "ALTER TABLE users ALTER COLUMN is_verified DROP DEFAULT",
+                    "ALTER TABLE users ALTER COLUMN is_verified TYPE BOOLEAN USING (is_verified <> 0)",
+                    "ALTER TABLE users ALTER COLUMN is_verified SET DEFAULT FALSE",
+                ]
+            )
+
     if statements:
         with engine.begin() as connection:
             for stmt in statements:
@@ -79,7 +108,8 @@ def _run_lightweight_migrations(engine) -> None:
     if not inspector.has_table("delivery_preferences"):
         return
 
-    delivery_existing = {column["name"] for column in inspector.get_columns("delivery_preferences")}
+    delivery_columns = {column["name"]: column for column in inspector.get_columns("delivery_preferences")}
+    delivery_existing = set(delivery_columns.keys())
     delivery_statements: list[str] = []
     if "slack_enabled" not in delivery_existing:
         delivery_statements.append(
@@ -101,6 +131,22 @@ def _run_lightweight_migrations(engine) -> None:
         delivery_statements.append(
             "ALTER TABLE delivery_preferences ADD COLUMN timezone VARCHAR(64) NOT NULL DEFAULT 'local'"
         )
+
+    # Legacy schema compatibility: older bootstrap scripts created boolean flags as INTEGER.
+    if dialect == "postgresql":
+        for flag_column in ("email_enabled", "webhook_enabled", "slack_enabled", "discord_enabled"):
+            if flag_column not in delivery_columns:
+                continue
+            flag_type = str(delivery_columns[flag_column]["type"]).lower()
+            if "bool" in flag_type:
+                continue
+            delivery_statements.extend(
+                [
+                    f"ALTER TABLE delivery_preferences ALTER COLUMN {flag_column} DROP DEFAULT",
+                    f"ALTER TABLE delivery_preferences ALTER COLUMN {flag_column} TYPE BOOLEAN USING ({flag_column} <> 0)",
+                    f"ALTER TABLE delivery_preferences ALTER COLUMN {flag_column} SET DEFAULT FALSE",
+                ]
+            )
 
     if not delivery_statements:
         return

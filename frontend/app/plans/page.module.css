@@ -1,0 +1,87 @@
+.plansShell {
+  min-height: 100vh;
+  background:
+    radial-gradient(950px 500px at 0% 0%, rgba(56, 189, 248, 0.2), transparent 56%),
+    radial-gradient(700px 450px at 100% 0%, rgba(16, 185, 129, 0.17), transparent 55%),
+    linear-gradient(180deg, #08111d 0%, #050a12 100%);
+  color: #e5edf8;
+  padding: 24px;
+  display: grid;
+  place-items: center;
+}
+
+.panel {
+  width: min(1100px, 100%);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 18px;
+  padding: 24px;
+  background: rgba(7, 14, 26, 0.78);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
+  display: grid;
+  gap: 16px;
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(1.4rem, 2.8vw, 2rem);
+}
+
+.subtitle {
+  margin: 0;
+  color: #a7b8cd;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.card {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 12px;
+  padding: 14px;
+  background: rgba(11, 18, 33, 0.7);
+  display: grid;
+  gap: 10px;
+}
+
+.card h3 {
+  margin: 0;
+}
+
+.card p {
+  margin: 0;
+  color: #b4c3d7;
+  font-size: 0.94rem;
+}
+
+.button {
+  border: 1px solid rgba(56, 189, 248, 0.45);
+  border-radius: 10px;
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.25), rgba(16, 185, 129, 0.2));
+  color: #ecf6ff;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.button[disabled] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.buttonAlt {
+  border-color: rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.75);
+}
+
+.error {
+  color: #fca5a5;
+  margin: 0;
+}
+
+@media (max-width: 880px) {
+  .cards {
+    grid-template-columns: 1fr;
+  }
+}

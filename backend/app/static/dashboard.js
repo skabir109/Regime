@@ -1294,16 +1294,35 @@ deliveryFormEl.addEventListener("submit", async (event) => {
 
 subscriptionFormEl.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const requestedTier = subscriptionTierEl.value;
+  const isUpgrade = currentUser && requestedTier !== "free" && requestedTier !== currentUser.tier;
+
+  if (isUpgrade) {
+    const checkoutResponse = await fetch("/billing/checkout/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tier: requestedTier }),
+    });
+    const checkoutData = await checkoutResponse.json();
+    if (!checkoutResponse.ok || !checkoutData.url) {
+      deliveryStatusEl.innerHTML = `<p>${checkoutData.detail || "Unable to start Stripe checkout."}</p>`;
+      return;
+    }
+    window.location.href = checkoutData.url;
+    return;
+  }
+
   const response = await fetch("/billing/tier", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tier: subscriptionTierEl.value }),
+    body: JSON.stringify({ tier: requestedTier }),
   });
   const data = await response.json();
   if (!response.ok) {
     deliveryStatusEl.innerHTML = `<p>${data.detail || "Unable to update plan."}</p>`;
     return;
   }
+
   currentUser = data;
   userBadgeEl.textContent = `${currentUser.name.toUpperCase()} • ${currentUser.tier.toUpperCase()}`;
   renderSubscription(currentUser, subscriptionTiers);

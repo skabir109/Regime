@@ -48,3 +48,14 @@ AI_ANALYZE_CACHE_MAX_ENTRIES = int(os.getenv("AI_ANALYZE_CACHE_MAX_ENTRIES", "51
 AI_ANALYZE_CACHE_PATH = Path(
     os.getenv("AI_ANALYZE_CACHE_PATH", str(BASE_DIR / "data" / "ai_analyze_cache.json"))
 )
+
+# Billing/paywall controls. Keep REGIME_BILLING_TOKEN server-side only.
+REGIME_BILLING_TOKEN = os.getenv("REGIME_BILLING_TOKEN", "").strip()
+
+# Stripe billing integration
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "").strip()
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
+STRIPE_PRICE_ID_PRO = os.getenv("STRIPE_PRICE_ID_PRO", "").strip()
+STRIPE_PRICE_ID_DESK = os.getenv("STRIPE_PRICE_ID_DESK", "").strip()
+STRIPE_SUCCESS_URL = os.getenv("STRIPE_SUCCESS_URL", f"{FRONTEND_ORIGIN}/app?billing=success").strip()
+STRIPE_CANCEL_URL = os.getenv("STRIPE_CANCEL_URL", f"{FRONTEND_ORIGIN}/app?billing=cancel").strip()

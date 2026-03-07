@@ -10,6 +10,10 @@ type SupabaseAuthResponse = {
   access_token?: string;
 };
 
+type AuthMeResponse = {
+  tier_selection_required?: boolean;
+};
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
@@ -45,11 +49,15 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const isLogin = mode === "login";
   const processingLabel = isLogin ? "Signing you in..." : "Creating your account...";
 
   useEffect(() => {
     router.prefetch("/terminal");
+    router.prefetch("/plans");
   }, [router]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -58,14 +66,18 @@ export default function LoginPage() {
       return;
     }
 
-    const formData = new FormData(event.currentTarget);
     setLoading(true);
     setError("");
     setNotice("");
 
-    const email = String(formData.get("email") || "").trim();
-    const password = String(formData.get("password") || "");
-    const name = String(formData.get("name") || "").trim();
+    const normalizedEmail = email.trim();
+    const normalizedName = name.trim();
+
+    if (!normalizedEmail || !password || (!isLogin && !normalizedName)) {
+      setError(isLogin ? "Enter email and password." : "Enter name, email, and password.");
+      setLoading(false);
+      return;
+    }
 
     let shouldResetLoading = true;
 
@@ -73,13 +85,13 @@ export default function LoginPage() {
       const authPayload =
         mode === "login"
           ? await supabaseAuthRequest<SupabaseAuthResponse>("/auth/v1/token?grant_type=password", {
-              email,
+              email: normalizedEmail,
               password,
             })
           : await supabaseAuthRequest<SupabaseAuthResponse>("/auth/v1/signup", {
-              email,
+              email: normalizedEmail,
               password,
-              data: { name },
+              data: { name: normalizedName },
             });
 
       if (!authPayload.access_token) {
@@ -92,8 +104,9 @@ export default function LoginPage() {
         method: "POST",
         body: JSON.stringify({ access_token: authPayload.access_token }),
       });
+      const me = await apiFetch<AuthMeResponse>("/auth/me");
       shouldResetLoading = false;
-      router.replace("/terminal");
+      router.replace(me.tier_selection_required ? "/plans" : "/terminal");
       return;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Authentication failed.");
@@ -137,17 +150,34 @@ export default function LoginPage() {
             <div className="auth-error">{error}</div>
           ) : null}
           {notice ? <div className="auth-notice">{notice}</div> : null}
-          <form onSubmit={handleSubmit} className="auth-form" method="post" action="/login">
+          <form onSubmit={handleSubmit} className="auth-form">
             {mode === "register" ? (
-              <input className="auth-input" disabled={loading} name="name" placeholder="Name" />
+              <input
+                className="auth-input"
+                disabled={loading}
+                placeholder="Name"
+                required
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
             ) : null}
-            <input className="auth-input" disabled={loading} name="email" placeholder="Email" type="email" />
             <input
               className="auth-input"
               disabled={loading}
-              name="password"
+              placeholder="Email"
+              required
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+            <input
+              className="auth-input"
+              disabled={loading}
               placeholder="Password"
+              required
               type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
             />
             <button className="button button-primary auth-submit" disabled={loading} type="submit">
               {loading ? processingLabel : mode === "login" ? (

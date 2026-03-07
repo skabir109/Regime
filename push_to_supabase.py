@@ -35,19 +35,24 @@ schema = """
         name TEXT NOT NULL,
         password_hash TEXT NOT NULL,
         tier TEXT NOT NULL DEFAULT 'free',
-        created_at TEXT NOT NULL,
-        is_verified INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL,
+        is_verified BOOLEAN NOT NULL DEFAULT FALSE,
         verification_token TEXT,
         reset_token TEXT,
-        reset_token_expires_at TEXT
+        reset_token_expires_at TIMESTAMPTZ,
+        failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+        locked_until TIMESTAMPTZ,
+        stripe_customer_id TEXT,
+        stripe_subscription_id TEXT,
+        tier_selection_required BOOLEAN NOT NULL DEFAULT FALSE
     );
 
     CREATE TABLE IF NOT EXISTS sessions (
         id SERIAL PRIMARY KEY,
         user_id INTEGER NOT NULL,
         token_hash TEXT NOT NULL UNIQUE,
-        expires_at TEXT NOT NULL,
-        created_at TEXT NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
     );
 
@@ -56,7 +61,7 @@ schema = """
         user_id INTEGER NOT NULL,
         symbol TEXT NOT NULL,
         label TEXT NOT NULL,
-        added_at TEXT NOT NULL,
+        added_at TIMESTAMPTZ NOT NULL,
         UNIQUE(user_id, symbol),
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
     );
@@ -68,18 +73,23 @@ schema = """
         headline TEXT NOT NULL,
         overview TEXT NOT NULL,
         payload_json TEXT NOT NULL,
-        created_at TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
         UNIQUE(user_id, briefing_date),
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS delivery_preferences (
         user_id INTEGER PRIMARY KEY,
-        email_enabled INTEGER NOT NULL DEFAULT 0,
-        webhook_enabled INTEGER NOT NULL DEFAULT 0,
+        email_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        webhook_enabled BOOLEAN NOT NULL DEFAULT FALSE,
         webhook_url TEXT,
         cadence TEXT NOT NULL DEFAULT 'premarket',
-        updated_at TEXT NOT NULL,
+        slack_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        slack_webhook_url TEXT,
+        discord_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        discord_webhook_url TEXT,
+        timezone TEXT NOT NULL DEFAULT 'local',
+        updated_at TIMESTAMPTZ NOT NULL,
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
     );
 
@@ -88,7 +98,7 @@ schema = """
         owner_user_id INTEGER NOT NULL,
         name TEXT NOT NULL,
         invite_code TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
         FOREIGN KEY (owner_user_id) REFERENCES users (id) ON DELETE CASCADE
     );
 
@@ -96,7 +106,7 @@ schema = """
         workspace_id INTEGER NOT NULL,
         user_id INTEGER NOT NULL UNIQUE,
         role TEXT NOT NULL,
-        joined_at TEXT NOT NULL,
+        joined_at TIMESTAMPTZ NOT NULL,
         PRIMARY KEY (workspace_id, user_id),
         FOREIGN KEY (workspace_id) REFERENCES shared_workspaces (id) ON DELETE CASCADE,
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
@@ -108,7 +118,7 @@ schema = """
         symbol TEXT NOT NULL,
         label TEXT NOT NULL,
         added_by_user_id INTEGER NOT NULL,
-        added_at TEXT NOT NULL,
+        added_at TIMESTAMPTZ NOT NULL,
         UNIQUE(workspace_id, symbol),
         FOREIGN KEY (workspace_id) REFERENCES shared_workspaces (id) ON DELETE CASCADE,
         FOREIGN KEY (added_by_user_id) REFERENCES users (id) ON DELETE CASCADE
@@ -119,7 +129,7 @@ schema = """
         workspace_id INTEGER NOT NULL,
         author_user_id INTEGER NOT NULL,
         content TEXT NOT NULL,
-        created_at TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
         FOREIGN KEY (workspace_id) REFERENCES shared_workspaces (id) ON DELETE CASCADE,
         FOREIGN KEY (author_user_id) REFERENCES users (id) ON DELETE CASCADE
     );
@@ -131,7 +141,7 @@ schema = """
         headline TEXT NOT NULL,
         overview TEXT NOT NULL,
         payload_json TEXT NOT NULL,
-        created_at TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
         FOREIGN KEY (workspace_id) REFERENCES shared_workspaces (id) ON DELETE CASCADE,
         FOREIGN KEY (author_user_id) REFERENCES users (id) ON DELETE CASCADE
     );
@@ -141,9 +151,10 @@ schema = """
         event_type TEXT NOT NULL,
         user_id INTEGER,
         details TEXT NOT NULL,
-        created_at TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
         FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL
     );
+
 """
 
 with conn.cursor() as cur:

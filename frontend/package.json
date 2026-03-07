@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "clean": "node -e \"require('fs').rmSync('.next', { recursive: true, force: true })\"",
+    "clean": "node -e \"const fs=require('fs');try{fs.rmSync('.next',{recursive:true,force:true,maxRetries:10,retryDelay:200});}catch(e){if(!['EBUSY','EPERM','ENOTEMPTY'].includes(e.code))throw e;console.warn('Skipping .next clean due to lock:',e.code);}\"",
     "dev": "next dev",
     "dev:clean": "npm run clean && next dev",
     "build": "next build",
@@ -12,6 +12,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@stripe/stripe-js": "^4.10.0",
     "d3-geo": "^3.1.1",
     "next": "^15.5.12",
     "react": "19.1.0",

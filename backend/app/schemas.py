@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field, validator
 from sqlmodel import SQLModel, Field as SQLField, Relationship
+from urllib.parse import urlparse
 import re
 
 def sanitize_html(value: str) -> str:
@@ -9,6 +10,33 @@ def sanitize_html(value: str) -> str:
     if not value:
         return value
     return re.sub(r'<[^>]*?>', '', value)
+
+
+def clean_text(value: str | None, *, max_len: int | None = None) -> str:
+    cleaned = sanitize_html((value or "").strip())
+    if max_len is not None:
+        cleaned = cleaned[:max_len]
+    return cleaned
+
+
+_SYMBOL_PATTERN = re.compile(r"^[A-Z0-9.\-]{1,15}$")
+
+
+def normalize_symbol(value: str) -> str:
+    normalized = clean_text(value, max_len=15).upper()
+    if not _SYMBOL_PATTERN.fullmatch(normalized):
+        raise ValueError("Invalid symbol format.")
+    return normalized
+
+
+def validate_webhook_url(value: str | None, *, max_len: int = 512) -> str:
+    cleaned = clean_text(value, max_len=max_len)
+    if not cleaned:
+        return ""
+    parsed = urlparse(cleaned)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Webhook URL must be a valid http(s) URL.")
+    return cleaned
 
 class User(SQLModel, table=True):
     __tablename__ = "users"
@@ -24,6 +52,9 @@ class User(SQLModel, table=True):
     reset_token_expires_at: Optional[datetime] = None
     failed_login_attempts: int = SQLField(default=0)
     locked_until: Optional[datetime] = None
+    stripe_customer_id: Optional[str] = None
+    stripe_subscription_id: Optional[str] = None
+    tier_selection_required: bool = SQLField(default=False)
 
     sessions: List["DBSession"] = Relationship(back_populates="user")
     watchlist_items: List["WatchlistItemDB"] = Relationship(back_populates="user")
@@ -303,9 +334,13 @@ class WatchlistRequest(BaseModel):
     symbol: str
     label: str | None = None
 
+    @validator("symbol")
+    def sanitize_symbol(cls, v):
+        return normalize_symbol(v)
+
     @validator("label")
     def sanitize_label(cls, v):
-        return sanitize_html(v)
+        return clean_text(v, max_len=80)
 
 
 class AlertItem(BaseModel):
@@ -322,6 +357,7 @@ class UserResponse(BaseModel):
     name: str
     tier: str
     created_at: datetime
+    tier_selection_required: bool = False
 
 
 class RegisterRequest(BaseModel):
@@ -329,28 +365,67 @@ class RegisterRequest(BaseModel):
     password: str
     name: str
 
+    @validator("email")
+    def sanitize_email(cls, v):
+        cleaned = clean_text(v, max_len=254).lower()
+        if "@" not in cleaned:
+            raise ValueError("Valid email is required.")
+        return cleaned
+
     @validator("name")
     def sanitize_name(cls, v):
-        return sanitize_html(v)
+        cleaned = clean_text(v, max_len=80)
+        if not cleaned:
+            raise ValueError("Name is required.")
+        return cleaned
 
 
 class LoginRequest(BaseModel):
     email: str
     password: str
 
+    @validator("email")
+    def sanitize_email(cls, v):
+        return clean_text(v, max_len=254).lower()
+
 
 class SupabaseSessionRequest(BaseModel):
     access_token: str
 
+    @validator("access_token")
+    def sanitize_access_token(cls, v):
+        cleaned = clean_text(v, max_len=4096)
+        if not cleaned:
+            raise ValueError("Access token is required.")
+        return cleaned
+
 class ForgotPasswordRequest(BaseModel):
     email: str
+
+    @validator("email")
+    def sanitize_email(cls, v):
+        return clean_text(v, max_len=254).lower()
 
 class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str
 
+    @validator("token")
+    def sanitize_token(cls, v):
+        cleaned = clean_text(v, max_len=512)
+        if not cleaned:
+            raise ValueError("Token is required.")
+        return cleaned
+
 class VerifyEmailRequest(BaseModel):
     token: str
+
+    @validator("token")
+    def sanitize_token(cls, v):
+        cleaned = clean_text(v, max_len=512)
+        if not cleaned:
+            raise ValueError("Token is required.")
+        return cleaned
 
 
 class RegimeDriver(BaseModel):
@@ -518,6 +593,29 @@ class DeliveryPreferencesRequest(BaseModel):
     cadence: str = "premarket"
     timezone: str | None = None
 
+    @validator("webhook_url")
+    def sanitize_webhook_url(cls, v):
+        return validate_webhook_url(v)
+
+    @validator("slack_webhook_url")
+    def sanitize_slack_webhook_url(cls, v):
+        return validate_webhook_url(v)
+
+    @validator("discord_webhook_url")
+    def sanitize_discord_webhook_url(cls, v):
+        return validate_webhook_url(v)
+
+    @validator("cadence")
+    def sanitize_cadence(cls, v):
+        cleaned = clean_text(v, max_len=32).lower()
+        if not cleaned:
+            return "premarket"
+        return cleaned
+
+    @validator("timezone")
+    def sanitize_timezone(cls, v):
+        return clean_text(v or "local", max_len=64) or "local"
+
 
 class BriefingDeliveryResult(BaseModel):
     headline: str
@@ -542,6 +640,35 @@ class SubscriptionTier(BaseModel):
 
 class SubscriptionUpdateRequest(BaseModel):
     tier: str
+
+    @validator("tier")
+    def sanitize_tier(cls, v):
+        cleaned = clean_text(v, max_len=16).lower()
+        if not cleaned:
+            raise ValueError("Tier is required.")
+        return cleaned
+
+
+class BillingCheckoutRequest(BaseModel):
+    tier: str
+
+    @validator("tier")
+    def sanitize_tier(cls, v):
+        cleaned = clean_text(v, max_len=16).lower()
+        if cleaned not in {"pro", "desk"}:
+            raise ValueError("Checkout tier must be pro or desk.")
+        return cleaned
+
+
+class BillingSessionResponse(BaseModel):
+    url: str
+
+
+class BillingIntentResponse(BaseModel):
+    client_secret: str
+    intent_type: str
+    tier: str
+    subscription_id: str
 
 
 class SharedWorkspaceMember(BaseModel):
@@ -586,17 +713,30 @@ class SharedWorkspaceRequest(BaseModel):
 
     @validator("name")
     def sanitize_name(cls, v):
-        return sanitize_html(v)
+        cleaned = clean_text(v, max_len=80)
+        if not cleaned:
+            raise ValueError("Workspace name is required.")
+        return cleaned
 
 class SharedWorkspaceJoinRequest(BaseModel):
     invite_code: str
+
+    @validator("invite_code")
+    def sanitize_invite_code(cls, v):
+        cleaned = clean_text(v, max_len=32).upper()
+        if not cleaned:
+            raise ValueError("Invite code is required.")
+        return cleaned
 
 class SharedWorkspaceNoteRequest(BaseModel):
     content: str
 
     @validator("content")
     def sanitize_content(cls, v):
-        return sanitize_html(v)
+        cleaned = clean_text(v, max_len=500)
+        if not cleaned:
+            raise ValueError("Note content is required.")
+        return cleaned
 
 
 class TerminalBootstrapResponse(BaseModel):
@@ -617,6 +757,36 @@ class AIAnalyzeRequest(BaseModel):
     kb_context: list[str] = Field(default_factory=list)
     max_words: int = 220
     regenerate_on_fail: bool = True
+
+    @validator("mode")
+    def sanitize_mode(cls, v):
+        return clean_text(v, max_len=32).upper() or "BRIEFING"
+
+    @validator("query")
+    def sanitize_query(cls, v):
+        return clean_text(v, max_len=2000)
+
+    @validator("watchlist", pre=True)
+    def sanitize_watchlist(cls, v):
+        if not v:
+            return []
+        cleaned: list[str] = []
+        for item in v:
+            try:
+                cleaned.append(normalize_symbol(str(item)))
+            except ValueError:
+                continue
+        return cleaned[:25]
+
+    @validator("kb_context", pre=True)
+    def sanitize_kb_context(cls, v):
+        if not v:
+            return []
+        return [clean_text(str(item), max_len=300) for item in v[:20] if clean_text(str(item), max_len=300)]
+
+    @validator("max_words")
+    def clamp_max_words(cls, v):
+        return max(120, min(int(v), 320))
 
 
 class AIAnalyzeResponse(BaseModel):

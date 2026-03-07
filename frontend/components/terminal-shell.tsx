@@ -14,6 +14,7 @@ type User = {
   name: string;
   tier: string;
   created_at: string;
+  tier_selection_required?: boolean;
 };
 
 type PredictResponse = {
@@ -1602,6 +1603,10 @@ export default function TerminalShell() {
 
     try {
       const bootstrap = await apiFetch<TerminalBootstrap>("/terminal/bootstrap");
+      if (bootstrap.me?.tier_selection_required) {
+        window.location.href = "/plans";
+        return;
+      }
       setData((current) =>
         current
           ? {
@@ -2324,9 +2329,17 @@ export default function TerminalShell() {
     event.preventDefault();
     setSaving("tier");
     try {
+      const currentTier = String(data?.me?.tier || "free").toLowerCase();
+      const requestedTier = String(selectedTier || "free").toLowerCase();
+
+      if (requestedTier !== "free" && requestedTier !== currentTier) {
+        window.location.href = `/billing?tier=${encodeURIComponent(requestedTier)}`;
+        return;
+      }
+
       await apiFetch("/billing/tier", {
         method: "PUT",
-        body: JSON.stringify({ tier: selectedTier }),
+        body: JSON.stringify({ tier: requestedTier }),
       });
       setLoadedViews((current) => ({ ...current, system: false }));
       await refreshActiveView();
