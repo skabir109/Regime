@@ -20,9 +20,45 @@ type Tier = {
   webhook_delivery: boolean;
 };
 
+const TIER_CONTENT: Record<
+  string,
+  { tagline: string; additions: string[]; includes?: string[]; price: string; cadence: string }
+> = {
+  free: {
+    tagline: "Start with core market context",
+    price: "$0",
+    cadence: "Always free",
+    includes: [
+      "Monitor workspace and core regime context",
+      "Signals workspace with basic watchlist coverage",
+      "Email preferences and fallback catalyst calendar",
+    ],
+    additions: [],
+  },
+  pro: {
+    tagline: "For active individual traders",
+    price: "$29",
+    cadence: "per month",
+    additions: [
+      "World Affairs, Markets, and News workspaces",
+      "Webhook, Slack, and Discord delivery channels",
+      "Verified calendar access when provider is configured",
+    ],
+  },
+  desk: {
+    tagline: "Team workflows and shared context",
+    price: "$99",
+    cadence: "per month",
+    additions: [
+      "Shared desk workspace with invite codes",
+      "Shared watchlist, notes, alerts, and briefing snapshots",
+      "Expanded capacity for desk-style collaboration",
+    ],
+  },
+};
+
 export default function PlansPage() {
   const router = useRouter();
-  const [me, setMe] = useState<AuthMe | null>(null);
   const [tiers, setTiers] = useState<Tier[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -46,7 +82,6 @@ export default function PlansPage() {
           router.replace("/terminal");
           return;
         }
-        setMe(mePayload);
         setTiers(tiersPayload);
       } catch (caught) {
         if (cancelled) {
@@ -109,29 +144,69 @@ export default function PlansPage() {
       <section className={styles.panel}>
         <h1 className={styles.title}>Choose Your Plan Before Entering Regime</h1>
         <p className={styles.subtitle}>
-          Select Free to continue instantly, or choose Pro/Desk to open secure billing checkout.
+          Pick a tier now, then continue to your dashboard. Paid tiers route to secure checkout.
         </p>
         {error ? <p className={styles.error}>{error}</p> : null}
 
         <div className={styles.cards}>
-          {ordered.map((tier) => {
+          {ordered.map((tier, index) => {
             const isFree = tier.tier === "free";
             const isBusy = submittingTier === tier.tier;
+            const previousTier = index > 0 ? ordered[index - 1] : null;
+            const content = TIER_CONTENT[tier.tier] ?? {
+              tagline: tier.description,
+              additions: [],
+              includes: [],
+              price: "--",
+              cadence: "",
+            };
             return (
               <article className={styles.card} key={tier.tier}>
-                <h3>{tier.label}</h3>
-                <p>{tier.description}</p>
-                <p>Watchlist: {tier.watchlist_limit}</p>
-                <p>History: {tier.briefing_history_limit}</p>
-                <p>Verified calendar: {tier.verified_calendar ? "Yes" : "No"}</p>
-                <p>Webhook delivery: {tier.webhook_delivery ? "Yes" : "No"}</p>
+                <div className={styles.head}>
+                  <span className={styles.eyebrow}>{tier.label}</span>
+                  <h2>{content.price}</h2>
+                  <p className={styles.cadence}>{content.cadence}</p>
+                  <p className={styles.tagline}>{content.tagline}</p>
+                </div>
+
+                <div className={styles.meta}>
+                  <span>Watchlist {tier.watchlist_limit}</span>
+                  <span>{tier.briefing_history_limit}-day history</span>
+                </div>
+
+                {previousTier ? (
+                  <div className={styles.ladder}>
+                    <p className={styles.inherits}>All features of {previousTier.label}</p>
+                    <p className={styles.additionsLabel}>New in {tier.label}</p>
+                    <ul className={styles.list}>
+                      {content.additions.map((feature) => (
+                        <li key={feature}>{feature}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <div className={styles.ladder}>
+                    <p className={styles.inherits}>Core includes</p>
+                    <ul className={styles.list}>
+                      {(content.includes ?? []).map((feature) => (
+                        <li key={feature}>{feature}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div className={styles.capabilities}>
+                  <span>Verified calendar: {tier.verified_calendar ? "Included" : "Not included"}</span>
+                  <span>Webhook delivery: {tier.webhook_delivery ? "Included" : "Not included"}</span>
+                </div>
+
                 <button
                   className={`${styles.button} ${isFree ? styles.buttonAlt : ""}`}
                   disabled={Boolean(submittingTier)}
                   onClick={() => (isFree ? void chooseFree() : choosePaid(tier.tier))}
                   type="button"
                 >
-                  {isBusy ? "Processing..." : isFree ? "Continue with Free" : `Choose ${tier.label}`}
+                  {isBusy ? "Processing..." : isFree ? "Continue with Free" : `Upgrade to ${tier.label}`}
                 </button>
               </article>
             );

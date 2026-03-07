@@ -12,12 +12,14 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.config import (
+    APP_ENV,
     APP_DESCRIPTION,
     APP_TITLE,
     APP_VERSION,
     CORS_ORIGINS,
     CSRF_COOKIE_NAME,
     CSRF_HEADER_NAME,
+    CSRF_SECRET,
     DATA_PATH,
     SESSION_COOKIE_NAME,
     SESSION_DURATION_HOURS,
@@ -38,6 +40,7 @@ from app.schemas import (
     DeliveryChannelTestResult,
     ForgotPasswordRequest,
     HealthResponse,
+    SecurityHealthResponse,
     LoginRequest,
     MarketAssetSnapshot,
     MarketLeader,
@@ -65,7 +68,6 @@ from app.schemas import (
     ClerkSessionRequest,
     SubscriptionTier,
     SubscriptionUpdateRequest,
-    SupabaseSessionRequest,
     TerminalBootstrapResponse,
     StressTestResult,
     PremarketBriefing,
@@ -86,7 +88,6 @@ from app.services.alerts import build_alerts
 from app.services.db import init_db
 from app.services.auth import (
     authenticate_clerk_session_token,
-    authenticate_supabase_access_token,
     authenticate_user,
     create_session,
     current_user_or_401,
@@ -101,6 +102,7 @@ from app.services.auth import (
 )
 from app.services.audit import log_audit_event
 from app.services.api_protection import APILimitError, enforce_burst_limit, enforce_daily_limit
+from app.services.api_protection import rate_limit_backend_status
 from app.services.csrf import allowed_origin_set, extract_origin_from_referer, generate_csrf_token, validate_csrf_token
 from app.services.delivery import send_global_macro_briefing
 from app.services.delivery import send_test_channel_message
@@ -160,7 +162,6 @@ _CSRF_EXEMPT_PATHS = {
     "/auth/register",
     "/auth/login",
     "/auth/clerk/session",
-    "/auth/supabase/session",
     "/auth/forgot-password",
     "/auth/reset-password",
     "/auth/verify-email",
@@ -691,30 +692,6 @@ def auth_login(request: Request, payload: LoginRequest, response: Response):
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
-@app.post("/auth/supabase/session", response_model=UserResponse, tags=["auth"])
-@limiter.limit("15/minute")
-def auth_supabase_session(request: Request, payload: SupabaseSessionRequest, response: Response):
-    try:
-        user = authenticate_supabase_access_token(payload.access_token)
-        token = create_session(user["id"])
-        csrf_token = generate_csrf_token()
-        _set_session_cookie(response, token)
-        _set_csrf_cookie(response, csrf_token)
-        log_audit_event(
-            "user_logged_in_supabase",
-            user["id"],
-            {"email": user["email"], "ip": request.client.host if request.client else None},
-        )
-        return user
-    except Exception as exc:
-        log_audit_event(
-            "user_login_supabase_failed",
-            None,
-            {"error": str(exc), "ip": request.client.host if request.client else None},
-        )
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
-
-
 @app.post("/auth/clerk/session", response_model=UserResponse, tags=["auth"])
 @limiter.limit("20/minute")
 def auth_clerk_session(request: Request, payload: ClerkSessionRequest, response: Response):
@@ -993,6 +970,32 @@ def health():
         status="ok",
         model_loaded=True,
         data_available=DATA_PATH.exists(),
+    )
+
+
+@app.get("/health/security", response_model=SecurityHealthResponse, tags=["system"])
+def health_security():
+    warnings: list[str] = []
+    csrf_secret_configured = bool(CSRF_SECRET)
+    if APP_ENV in {"production", "prod"} and not csrf_secret_configured:
+        warnings.append("REGIME_CSRF_SECRET is missing in production mode.")
+    if not SESSION_SECURE:
+        warnings.append("REGIME_SESSION_SECURE is false.")
+    if str(SESSION_SAMESITE).lower() != "strict":
+        warnings.append("REGIME_SESSION_SAMESITE is not strict.")
+
+    redis_status = rate_limit_backend_status()
+    if APP_ENV in {"production", "prod"} and redis_status.get("mode") != "redis":
+        warnings.append("Redis-backed burst limiting is not active.")
+
+    return SecurityHealthResponse(
+        status="ok" if not warnings else "degraded",
+        app_env=APP_ENV,
+        session_secure_default=SESSION_SECURE,
+        session_samesite=SESSION_SAMESITE,
+        csrf_secret_configured=csrf_secret_configured,
+        redis=redis_status,
+        warnings=warnings,
     )
 
 

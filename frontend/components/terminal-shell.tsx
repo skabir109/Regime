@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { feature } from "topojson-client";
 import { geoCentroid, geoGraticule10, geoNaturalEarth1, geoPath } from "d3-geo";
 import worldAtlasCountries from "world-atlas/countries-110m.json";
+import { useClerk } from "@clerk/nextjs";
 import { apiFetch } from "@/lib/api";
 
 type ViewKey = "monitor" | "briefing" | "world" | "markets" | "signals" | "desk" | "news" | "system";
@@ -1512,7 +1513,9 @@ function OnboardingTooltip({ step, onNext, onSkip }: { step: number; onNext: () 
 }
 
 export default function TerminalShell() {
+  const { signOut } = useClerk();
   const [activeView, setActiveView] = useState<ViewKey>("monitor");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [clock, setClock] = useState("");
   const [data, setData] = useState<TerminalData | null>(null);
   const [error, setError] = useState("");
@@ -2253,6 +2256,7 @@ export default function TerminalShell() {
   }
 
   function navigateToView(view: ViewKey) {
+    setMobileMenuOpen(false);
     if (!data) {
       setActiveView(view);
       return;
@@ -2265,8 +2269,11 @@ export default function TerminalShell() {
   }
 
   async function handleLogout() {
-    await apiFetch("/auth/logout", { method: "POST" });
-    window.location.href = "/login";
+    try {
+      await apiFetch("/auth/logout", { method: "POST" });
+    } finally {
+      await signOut({ redirectUrl: "/login" });
+    }
   }
 
   async function handleWatchlistSubmit(event: FormEvent<HTMLFormElement>) {
@@ -2597,8 +2604,8 @@ export default function TerminalShell() {
 
   return (
     <main className="nt-shell">
-      <div className="nt-grid">
-        <aside className="nt-sidebar">
+      <div className={`nt-grid ${mobileMenuOpen ? "menu-open" : ""}`}>
+        <aside className={`nt-sidebar ${mobileMenuOpen ? "is-open" : ""}`}>
           <div className="nt-brand">
             <span className="nt-wordmark">REGIME</span>
             <p className="nt-brand-copy">Market context, catalysts, watchlists, and desk workflow.</p>
@@ -2689,6 +2696,14 @@ export default function TerminalShell() {
           ) : null}
 
           <header className="nt-header">
+            <button 
+              className="button button-small nt-mobile-menu-toggle" 
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              type="button"
+              aria-label="Toggle Menu"
+            >
+              {mobileMenuOpen ? "✕" : "☰"}
+            </button>
             <div className="nt-header-copy">
               <p className="eyebrow">Workspace</p>
               <h2>{activeViewMeta.label}</h2>

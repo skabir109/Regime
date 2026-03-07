@@ -5,8 +5,14 @@ import secrets
 import time
 
 from sqlmodel import Session, select
-from redis import Redis
-from redis.exceptions import RedisError
+try:
+    from redis import Redis
+    from redis.exceptions import RedisError
+except Exception:  # pragma: no cover - fallback when redis package is unavailable
+    Redis = None  # type: ignore[assignment]
+
+    class RedisError(Exception):
+        pass
 
 from app.config import REDIS_KEY_PREFIX, REDIS_URL
 from app.schemas import APIUsageCounterDB
@@ -46,6 +52,8 @@ def _utc_day_bucket() -> str:
 
 def _redis_client() -> Redis | None:
     global _REDIS_CLIENT
+    if Redis is None:
+        return None
     if not REDIS_URL:
         return None
     if _REDIS_CLIENT is not None:
@@ -54,6 +62,26 @@ def _redis_client() -> Redis | None:
         if _REDIS_CLIENT is None:
             _REDIS_CLIENT = Redis.from_url(REDIS_URL, socket_timeout=1.5, socket_connect_timeout=1.5)
     return _REDIS_CLIENT
+
+
+def rate_limit_backend_status() -> dict[str, object]:
+    configured = bool(REDIS_URL)
+    client = _redis_client()
+    redis_ok = False
+    mode = "memory"
+    if client is not None:
+        try:
+            redis_ok = bool(client.ping())
+            mode = "redis" if redis_ok else "memory"
+        except RedisError:
+            redis_ok = False
+            mode = "memory"
+    return {
+        "configured": configured,
+        "mode": mode,
+        "redis_ok": redis_ok,
+        "key_prefix": REDIS_KEY_PREFIX,
+    }
 
 
 def _enforce_burst_limit_redis(user_id: int, endpoint: str, limit_per_minute: int) -> bool:

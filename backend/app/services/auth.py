@@ -19,8 +19,6 @@ from app.config import (
     CLERK_SECRET_KEY,
     SESSION_COOKIE_NAME,
     SESSION_DURATION_HOURS,
-    SUPABASE_ANON_KEY,
-    SUPABASE_URL,
 )
 from app.services.db import get_engine, init_db
 from app.schemas import User, DBSession
@@ -169,46 +167,6 @@ def _full_name(first_name: str | None, last_name: str | None) -> str:
     return " ".join(parts).strip()
 
 
-def _upsert_supabase_user(profile: dict) -> dict:
-    _ensure_schema_ready()
-    email = (profile.get("email") or "").strip().lower()
-    if not email:
-        raise ValueError("Supabase user is missing an email address.")
-
-    user_metadata = profile.get("user_metadata") or {}
-    name = (
-        user_metadata.get("name")
-        or user_metadata.get("full_name")
-        or profile.get("name")
-        or _default_name_for_email(email)
-    ).strip()
-    created_at_str = profile.get("created_at")
-    created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00")) if created_at_str else datetime.now(timezone.utc)
-
-    with Session(get_engine()) as session:
-        user = session.exec(select(User).where(User.email == email)).first()
-
-        if user:
-            user.name = name
-            user.is_verified = True
-        else:
-            user = User(
-                email=email,
-                name=name,
-                password_hash=hash_password(secrets.token_urlsafe(32)),
-                tier=DEFAULT_TIER,
-                created_at=created_at,
-                is_verified=True,
-                verification_token=None,
-                tier_selection_required=True,
-            )
-        
-        session.add(user)
-        session.commit()
-        session.refresh(user)
-        return _user_payload(user)
-
-
 def _get_clerk_jwks_client() -> jwt.PyJWKClient:
     global _CLERK_JWKS_CLIENT, _CLERK_JWKS_READY_AT
     if not CLERK_JWKS_URL:
@@ -240,11 +198,14 @@ def _decode_clerk_session_token(session_token: str) -> dict:
 def _fetch_clerk_user(user_id: str) -> dict:
     if not CLERK_SECRET_KEY:
         return {}
-    response = requests.get(
-        f"{CLERK_API_URL}/v1/users/{user_id}",
-        headers={"Authorization": f"Bearer {CLERK_SECRET_KEY}"},
-        timeout=10,
-    )
+    try:
+        response = requests.get(
+            f"{CLERK_API_URL}/v1/users/{user_id}",
+            headers={"Authorization": f"Bearer {CLERK_SECRET_KEY}"},
+            timeout=3,
+        )
+    except requests.RequestException:
+        return {}
     if response.status_code >= 400:
         return {}
     return response.json()
@@ -256,25 +217,27 @@ def _upsert_clerk_user(claims: dict) -> dict:
     if not clerk_user_id:
         raise ValueError("Invalid Clerk token: missing subject.")
 
-    clerk_user = _fetch_clerk_user(clerk_user_id)
-    fallback_email = ""
-    if clerk_user:
+    email = (claims.get("email") or claims.get("email_address") or "").strip().lower()
+    name = (claims.get("name") or "").strip()
+    clerk_user: dict = {}
+
+    # Avoid blocking every login on Clerk API latency; only fetch profile when required.
+    if not email or not name:
+        clerk_user = _fetch_clerk_user(clerk_user_id)
+
+    if not email and clerk_user:
         addresses = clerk_user.get("email_addresses") or []
         if addresses:
-            fallback_email = (addresses[0].get("email_address") or "").strip().lower()
+            email = (addresses[0].get("email_address") or "").strip().lower()
 
-    email = (
-        (claims.get("email") or claims.get("email_address") or "").strip().lower()
-        or fallback_email
-    )
     if not email:
         raise ValueError("Clerk session does not include an email address.")
 
     name = (
-        _full_name(clerk_user.get("first_name"), clerk_user.get("last_name"))
-        if clerk_user
-        else ""
-    ) or (claims.get("name") or "").strip() or _default_name_for_email(email)
+        name
+        or (_full_name(clerk_user.get("first_name"), clerk_user.get("last_name")) if clerk_user else "")
+        or _default_name_for_email(email)
+    )
 
     with Session(get_engine()) as session:
         user = session.exec(select(User).where(User.email == email)).first()
@@ -296,27 +259,6 @@ def _upsert_clerk_user(claims: dict) -> dict:
         session.commit()
         session.refresh(user)
         return _user_payload(user)
-
-
-def authenticate_supabase_access_token(access_token: str) -> dict:
-    token = access_token.strip()
-    if not token:
-        raise ValueError("Supabase access token is required.")
-    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
-        raise ValueError("Supabase auth is not configured on the backend.")
-
-    response = requests.get(
-        f"{SUPABASE_URL}/auth/v1/user",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "apikey": SUPABASE_ANON_KEY,
-        },
-        timeout=10,
-    )
-    if response.status_code >= 400:
-        raise ValueError("Supabase session could not be verified.")
-
-    return _upsert_supabase_user(response.json())
 
 
 def authenticate_clerk_session_token(session_token: str) -> dict:

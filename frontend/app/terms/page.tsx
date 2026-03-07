@@ -70,10 +70,10 @@ export default function TermsPage() {
           <p>For legal inquiries, contact: legal@regime.local</p>
         </section>
         <div className="legal-links">
+          <a href="/">Home</a>
           <a href="/about">About</a>
           <a href="/pricing">Pricing</a>
           <a href="/privacy">Privacy</a>
-          <a href="/">Home</a>
         </div>
       </section>
     </main>

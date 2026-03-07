@@ -1,6 +1,10 @@
 from pathlib import Path
 import os
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - optional fallback for minimal runtime environments
+    def load_dotenv(*_args, **_kwargs):  # type: ignore[no-redef]
+        return False
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -26,6 +30,7 @@ APP_VERSION = "0.2.0"
 APP_DESCRIPTION = (
     "Market intelligence backend for Regime."
 )
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
 
 SESSION_COOKIE_NAME = "regime_session"
 SESSION_DURATION_HOURS = 24 * 7
@@ -40,15 +45,13 @@ REDIS_KEY_PREFIX = os.getenv("REDIS_KEY_PREFIX", "regime")
 ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "")
 CALENDAR_PROVIDER = os.getenv("REGIME_CALENDAR_PROVIDER", "auto").lower()
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", os.getenv("NEXT_PUBLIC_SUPABASE_URL", "")).rstrip("/")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY", ""))
-
 # Clerk auth migration settings.
-CLERK_ISSUER = os.getenv("CLERK_ISSUER", "").strip().rstrip("/")
+# `CLERK_FRONTEND_API_URL` and `CLERK_BACKEND_API_URL` match Clerk dashboard naming.
+CLERK_ISSUER = os.getenv("CLERK_ISSUER", os.getenv("CLERK_FRONTEND_API_URL", "")).strip().rstrip("/")
 CLERK_AUDIENCE = os.getenv("CLERK_AUDIENCE", "").strip()
 CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", f"{CLERK_ISSUER}/.well-known/jwks.json" if CLERK_ISSUER else "").strip()
 CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY", "").strip()
-CLERK_API_URL = os.getenv("CLERK_API_URL", "https://api.clerk.com").strip().rstrip("/")
+CLERK_API_URL = os.getenv("CLERK_API_URL", os.getenv("CLERK_BACKEND_API_URL", "https://api.clerk.com")).strip().rstrip("/")
 
 LLM_API_KEY = os.getenv("LLM_API_KEY", os.getenv("OPENAI_API_KEY", "")).strip()
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")

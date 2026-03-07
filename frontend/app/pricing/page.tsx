@@ -55,8 +55,8 @@ export default function PricingPage() {
         <h1>Simple plans for traders and desks.</h1>
         <p>Pick a plan based on watchlist size, delivery channels, and collaboration depth. You can switch plans inside System at any time.</p>
         <div className="landing-actions">
-          <a className="button button-primary" href="/login">Open Terminal</a>
           <a className="button" href="/">Back Home</a>
+          <a className="button button-primary" href="/login">Open Terminal</a>
         </div>
       </section>
 
@@ -81,10 +81,10 @@ export default function PricingPage() {
         ))}
       </section>
       <div className="legal-links">
+        <a href="/">Home</a>
         <a href="/about">About</a>
         <a href="/privacy">Privacy</a>
         <a href="/terms">Terms</a>
-        <a href="/">Home</a>
       </div>
     </main>
   );

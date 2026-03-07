@@ -13,10 +13,9 @@
 .panel {
   width: min(1100px, 100%);
   border: 1px solid rgba(148, 163, 184, 0.25);
-  border-radius: 18px;
+  border-radius: 0;
   padding: 24px;
   background: rgba(7, 14, 26, 0.78);
-  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
   display: grid;
   gap: 16px;
 }
@@ -39,27 +38,106 @@
 
 .card {
   border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 12px;
-  padding: 14px;
-  background: rgba(11, 18, 33, 0.7);
+  border-radius: 0;
+  padding: 18px;
+  background: rgba(8, 14, 25, 0.72);
   display: grid;
-  gap: 10px;
+  gap: 14px;
 }
 
-.card h3 {
-  margin: 0;
+.head {
+  display: grid;
+  gap: 6px;
 }
 
-.card p {
+.card:hover,
+.card:focus-within {
+  border-color: rgba(56, 189, 248, 0.52);
+  background: rgba(10, 17, 30, 0.82);
+}
+
+.eyebrow {
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #8fb7d8;
+}
+
+.card h2 {
   margin: 0;
-  color: #b4c3d7;
+  font-size: clamp(1.6rem, 2.5vw, 2rem);
+}
+
+.cadence {
+  margin: 0;
+  color: #91a5bb;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.tagline {
+  margin: 0;
+  color: #c1d2e3;
   font-size: 0.94rem;
+}
+
+.meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.meta span {
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  color: #9fb5ca;
+}
+
+.ladder {
+  display: grid;
+  gap: 8px;
+}
+
+.inherits {
+  margin: 0;
+  font-size: 0.86rem;
+  color: #9ec0de;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.24);
+}
+
+.additionsLabel {
+  margin: 0;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #86d9f5;
+}
+
+.list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  color: #d4e2f0;
+  font-size: 0.9rem;
+}
+
+.capabilities {
+  display: grid;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: #94a8bc;
 }
 
 .button {
   border: 1px solid rgba(56, 189, 248, 0.45);
-  border-radius: 10px;
-  background: linear-gradient(90deg, rgba(56, 189, 248, 0.25), rgba(16, 185, 129, 0.2));
+  border-radius: 0;
+  background: rgba(56, 189, 248, 0.12);
   color: #ecf6ff;
   padding: 10px 12px;
   cursor: pointer;
@@ -82,6 +160,10 @@
 
 @media (max-width: 880px) {
   .cards {
+    grid-template-columns: 1fr;
+  }
+
+  .meta {
     grid-template-columns: 1fr;
   }
 }

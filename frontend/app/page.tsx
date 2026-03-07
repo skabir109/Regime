@@ -67,7 +67,6 @@ export default function HomePage() {
         </article>
       </section>
       <div className="legal-links">
-        <a href="/docs">User Guide</a>
         <a href="/about">About</a>
         <a href="/pricing">Pricing</a>
         <a href="/privacy">Privacy</a>

@@ -209,6 +209,16 @@ class HealthResponse(BaseModel):
     data_available: bool
 
 
+class SecurityHealthResponse(BaseModel):
+    status: str
+    app_env: str
+    session_secure_default: bool
+    session_samesite: str
+    csrf_secret_configured: bool
+    redis: dict[str, object]
+    warnings: list[str] = []
+
+
 class MetadataResponse(BaseModel):
     classes: list[str]
     features: list[str]
@@ -408,17 +418,6 @@ class LoginRequest(BaseModel):
     @validator("email")
     def sanitize_email(cls, v):
         return clean_text(v, max_len=254).lower()
-
-
-class SupabaseSessionRequest(BaseModel):
-    access_token: str
-
-    @validator("access_token")
-    def sanitize_access_token(cls, v):
-        cleaned = clean_text(v, max_len=4096)
-        if not cleaned:
-            raise ValueError("Access token is required.")
-        return cleaned
 
 
 class ClerkSessionRequest(BaseModel):

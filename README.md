@@ -90,20 +90,21 @@ npm run dev
 - `REGIME_SESSION_SECURE`
 - `REGIME_SESSION_SAMESITE`
 - `ALPHA_VANTAGE_API_KEY`
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
+- `CLERK_ISSUER` (or `CLERK_FRONTEND_API_URL`)
+- `CLERK_JWKS_URL`
+- `CLERK_SECRET_KEY`
+- `CLERK_AUDIENCE` (optional)
+- `CLERK_API_URL` (or `CLERK_BACKEND_API_URL`, optional)
 
 ### Frontend
 
 - `NEXT_PUBLIC_API_BASE_URL`
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
 
-### Supabase Email Auth
+### Auth Providers
 
-- Email signup and sign-in can be handled by Supabase from the Next.js login page.
-- After Supabase returns an access token, the frontend exchanges it with the backend at `POST /auth/supabase/session`.
-- The backend verifies that Supabase token against `SUPABASE_URL` and `SUPABASE_ANON_KEY`, then creates or updates the local app user and sets the normal `regime_session` cookie.
+- Clerk is the primary auth path.
+- Full Clerk wiring steps: [docs/clerk-auth-setup.md](/mnt/c/Users/shahk/visual%20studio%20projects/regime/docs/clerk-auth-setup.md)
 
 ## Product References
 
