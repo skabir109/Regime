@@ -1,4 +1,4 @@
-# Regime Monorepo
+# Regime
 
 Regime is an AI-native market intelligence product with a separated frontend and backend architecture.
 
