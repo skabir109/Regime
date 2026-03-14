@@ -78,7 +78,7 @@ npm run dev
 
 - Frontend: deploy `frontend/` to DigitalOcean App Platform as a Next.js app
 - Backend: deploy `backend/` to DigitalOcean App Platform as a FastAPI service
-- Database: move from local SQLite to PostgreSQL for hosted environments
+- Database: DigitalOcean Managed PostgreSQL for hosted environments
 
 ## Environment Notes
 
@@ -95,6 +95,8 @@ npm run dev
 - `CLERK_SECRET_KEY`
 - `CLERK_AUDIENCE` (optional)
 - `CLERK_API_URL` (or `CLERK_BACKEND_API_URL`, optional)
+
+DigitalOcean database migration and cutover steps: [docs/digitalocean-db-migration.md](/mnt/c/Users/shahk/visual%20studio%20projects/regime/docs/digitalocean-db-migration.md)
 
 ### Frontend
 

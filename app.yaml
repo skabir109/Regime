@@ -16,6 +16,21 @@ services:
       - key: DIRECT_URL
         scope: RUN_TIME
         value: ${DIRECT_URL}
+      - key: APP_ENV
+        scope: RUN_TIME
+        value: production
+      - key: FRONTEND_ORIGIN
+        scope: RUN_TIME
+        value: ${regime-web.PUBLIC_URL}
+      - key: CORS_ORIGINS
+        scope: RUN_TIME
+        value: ${regime-web.PUBLIC_URL}
+      - key: REGIME_SESSION_SECURE
+        scope: RUN_TIME
+        value: "true"
+      - key: REGIME_SESSION_SAMESITE
+        scope: RUN_TIME
+        value: strict
       - key: LLM_API_KEY
         scope: RUN_TIME
         value: ${LLM_API_KEY}
