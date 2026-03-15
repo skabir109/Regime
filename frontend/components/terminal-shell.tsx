@@ -2076,12 +2076,13 @@ export default function TerminalShell() {
       }
 
       if (view === "system") {
-        const [metadata, delivery, tiers] = await Promise.all([
+        const [diagnostics, metadata, delivery, tiers] = await Promise.all([
+          apiFetch<SystemDiagnostics>("/ops/status"),
           apiFetch<Metadata>("/metadata"),
           apiFetch<DeliveryPreferences>("/settings/delivery"),
           apiFetch<SubscriptionTier[]>("/billing/tiers"),
         ]);
-        setData((current) => (current ? { ...current, metadata, delivery, tiers } : current));
+        setData((current) => (current ? { ...current, diagnostics, metadata, delivery, tiers } : current));
         setDeliveryForm(delivery);
       }
 
@@ -4397,6 +4398,96 @@ export default function TerminalShell() {
                       </div>
                     ))}
                   {!Object.keys(data?.metadata.feature_importance || {}).length ? <SkeletonList rows={4} /> : null}
+                </div>
+              </article>
+
+              <article className="nt-panel nt-card nt-settings-wide">
+                <span className="eyebrow">System Diagnostics</span>
+                {systemHydrating ? (
+                  <SkeletonList rows={5} />
+                ) : (
+                  <div className="nt-stack">
+                    <div className="nt-state-grid nt-settings-summary">
+                      <div>
+                        <span>Environment</span>
+                        <strong>{data?.diagnostics?.app_env || "--"}</strong>
+                      </div>
+                      <div>
+                        <span>Database</span>
+                        <strong>{data?.diagnostics?.database.connected ? "Connected" : "Degraded"}</strong>
+                      </div>
+                      <div>
+                        <span>Rate Limits</span>
+                        <strong>{labelizeKey(data?.diagnostics?.security.rate_limit_backend.mode || "memory")}</strong>
+                      </div>
+                      <div>
+                        <span>Market Data Rows</span>
+                        <strong>{String(data?.diagnostics?.data.rows || 0)}</strong>
+                      </div>
+                      <div>
+                        <span>Latest Market Data</span>
+                        <strong>{data?.diagnostics?.data.latest_market_data_at ? formatDateTime(data.diagnostics.data.latest_market_data_at, currentTimezone) : "--"}</strong>
+                      </div>
+                      <div>
+                        <span>Training Window End</span>
+                        <strong>{String(data?.diagnostics?.model.training_window?.end || "--")}</strong>
+                      </div>
+                    </div>
+                    <div className="nt-stack nt-settings-compact">
+                      <div className="nt-list-item">
+                        <strong>Security Posture</strong>
+                        <p>
+                          Cookies: {data?.diagnostics?.security.session_secure ? "secure" : "not secure"}
+                          {" • "}SameSite: {data?.diagnostics?.security.session_samesite || "--"}
+                          {" • "}Redis: {data?.diagnostics?.security.rate_limit_backend.redis_ok ? "healthy" : "inactive"}
+                        </p>
+                      </div>
+                      {data?.diagnostics?.database.error ? (
+                        <div className="nt-list-item">
+                          <strong>Database Error</strong>
+                          <p>{data.diagnostics.database.error}</p>
+                        </div>
+                      ) : null}
+                      {(data?.diagnostics?.warnings || []).length ? (
+                        <div className="nt-list-item">
+                          <strong>Warnings</strong>
+                          <ul className="plain-list">
+                            {(data?.diagnostics?.warnings || []).map((item, index) => <li key={`diag-warning-${index}`}>{item}</li>)}
+                          </ul>
+                        </div>
+                      ) : (
+                        <div className="nt-list-item">
+                          <strong>Status</strong>
+                          <p>No active diagnostics warnings.</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </article>
+
+              <article className="nt-panel nt-card">
+                <span className="eyebrow">Demo Controls</span>
+                <div className="nt-stack">
+                  <div className="nt-list-item">
+                    <strong>{data?.starterPack?.name || "Starter Pack"}</strong>
+                    <p>{data?.starterPack?.description || "Recover a curated starter watchlist for demo use."}</p>
+                  </div>
+                  <div className="nt-chip-row">
+                    {(data?.starterPack?.items || []).map((item) => (
+                      <span className="nt-chip" key={`system-starter-${item.symbol}`}>
+                        {item.symbol}
+                      </span>
+                    ))}
+                  </div>
+                  <button
+                    className="button button-primary nt-settings-button"
+                    disabled={starterPackLoading}
+                    onClick={() => void handleStarterPackRecovery()}
+                    type="button"
+                  >
+                    {starterPackLoading ? "Recovering..." : "Recover Starter Watchlist"}
+                  </button>
                 </div>
               </article>
             </section>

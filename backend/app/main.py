@@ -41,6 +41,7 @@ from app.schemas import (
     ForgotPasswordRequest,
     HealthResponse,
     SecurityHealthResponse,
+    SystemDiagnosticsResponse,
     LoginRequest,
     MarketAssetSnapshot,
     MarketLeader,
@@ -1026,6 +1027,14 @@ def health_security():
         security_events=_security_metric_snapshot(),
         warnings=warnings,
     )
+
+
+@app.get("/ops/status", response_model=SystemDiagnosticsResponse, tags=["system"])
+def ops_status(current_user: dict = Depends(current_user_or_401)):
+    try:
+        return build_system_status()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/metadata", response_model=MetadataResponse, tags=["model"])
