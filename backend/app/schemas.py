@@ -220,6 +220,43 @@ class SecurityHealthResponse(BaseModel):
     warnings: list[str] = []
 
 
+class SystemDiagnosticsDatabase(BaseModel):
+    connected: bool
+    error: str = ""
+
+
+class SystemDiagnosticsSecurity(BaseModel):
+    session_secure: bool
+    session_samesite: str
+    cors_origins: list[str] = []
+    rate_limit_backend: dict[str, object] = {}
+
+
+class SystemDiagnosticsData(BaseModel):
+    file_exists: bool
+    file_updated_at: str = ""
+    latest_market_data_at: str = ""
+    latest_feature_data_at: str = ""
+    rows: int = 0
+
+
+class SystemDiagnosticsModel(BaseModel):
+    loaded: bool
+    classes: list[str] = []
+    feature_count: int = 0
+    training_window: dict[str, object] = {}
+    metrics: dict[str, float] = {}
+
+
+class SystemDiagnosticsResponse(BaseModel):
+    app_env: str
+    database: SystemDiagnosticsDatabase
+    security: SystemDiagnosticsSecurity
+    data: SystemDiagnosticsData
+    model: SystemDiagnosticsModel
+    warnings: list[str] = []
+
+
 class MetadataResponse(BaseModel):
     classes: list[str]
     features: list[str]
@@ -516,6 +553,23 @@ class MarketStateSummary(BaseModel):
     bull_case: list[str] = []
     bear_case: list[str] = []
     next_steps: list[str] = []
+    scorecard: "RegimeScorecard | None" = None
+
+
+class RegimeScoreMetric(BaseModel):
+    label: str
+    current_value: str
+    delta: str = ""
+    interpretation: str
+    tone: str
+    supports_regime: bool
+
+
+class RegimeScorecard(BaseModel):
+    conviction: str
+    primary_signal: str
+    caution_flag: str
+    metrics: list[RegimeScoreMetric] = []
 
 
 class SectorPerformance(BaseModel):
@@ -792,6 +846,22 @@ class TerminalBootstrapResponse(BaseModel):
     sectors: list[SectorPerformance] = []
     watchlist: list[WatchlistItem] = []
     world_timeline: list[NarrativeTimelineItem] = []
+
+
+class StarterPackItem(BaseModel):
+    symbol: str
+    label: str
+    role: str
+    rationale: str
+
+
+class StarterPackResponse(BaseModel):
+    name: str
+    description: str
+    items: list[StarterPackItem]
+    applied_symbols: list[str] = []
+    already_seeded: bool = False
+    watchlist: list[WatchlistItem] = []
 
 
 class AIAnalyzeRequest(BaseModel):

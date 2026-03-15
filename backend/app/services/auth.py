@@ -22,6 +22,7 @@ from app.config import (
 )
 from app.services.db import get_engine, init_db
 from app.schemas import User, DBSession
+from app.services.starter_pack import seed_starter_pack_for_user
 from app.services.subscriptions import DEFAULT_TIER, normalize_tier
 
 
@@ -114,7 +115,10 @@ def register_user(email: str, password: str, name: str) -> dict:
         session.add(user)
         session.commit()
         session.refresh(user)
-        return _user_payload(user)
+        payload = _user_payload(user)
+
+    seed_starter_pack_for_user(int(payload["id"]))
+    return payload
 
 
 def authenticate_user(email: str, password: str) -> dict:
@@ -240,11 +244,13 @@ def _upsert_clerk_user(claims: dict) -> dict:
     )
 
     with Session(get_engine()) as session:
+        created_new = False
         user = session.exec(select(User).where(User.email == email)).first()
         if user:
             user.name = name
             user.is_verified = True
         else:
+            created_new = True
             user = User(
                 email=email,
                 name=name,
@@ -258,7 +264,11 @@ def _upsert_clerk_user(claims: dict) -> dict:
         session.add(user)
         session.commit()
         session.refresh(user)
-        return _user_payload(user)
+        payload = _user_payload(user)
+
+    if created_new:
+        seed_starter_pack_for_user(int(payload["id"]))
+    return payload
 
 
 def authenticate_clerk_session_token(session_token: str) -> dict:

@@ -68,6 +68,7 @@ from app.schemas import (
     ClerkSessionRequest,
     SubscriptionTier,
     SubscriptionUpdateRequest,
+    StarterPackResponse,
     TerminalBootstrapResponse,
     StressTestResult,
     PremarketBriefing,
@@ -131,7 +132,9 @@ from app.services.shared_workspace import (
     save_shared_briefing_snapshot,
 )
 from app.services.signals import fetch_signals_for_universe, fetch_trending_signals
+from app.services.starter_pack import apply_starter_pack, get_starter_pack
 from app.services.state import build_market_state_summary, compute_regime_transitions
+from app.services.system_status import build_system_status
 from app.services.story import build_story_briefing
 from app.services.subscriptions import get_tier_config, list_tiers
 from app.services.terminal import compute_regime_history
@@ -1184,6 +1187,28 @@ def briefing_history(limit: int = 10, current_user: dict = Depends(current_user_
 @app.get("/watchlist", response_model=list[WatchlistItem], tags=["terminal"])
 def watchlist(current_user: dict = Depends(current_user_or_401)):
     return load_watchlist(current_user["id"])
+
+
+@app.get("/watchlist/starter-pack", response_model=StarterPackResponse, tags=["terminal"])
+def watchlist_starter_pack(current_user: dict = Depends(current_user_or_401)):
+    watchlist_items = load_watchlist(current_user["id"])
+    return {
+        **get_starter_pack(),
+        "applied_symbols": [],
+        "already_seeded": bool(watchlist_items),
+        "watchlist": watchlist_items,
+    }
+
+
+@app.post("/watchlist/starter-pack", response_model=StarterPackResponse, tags=["terminal"])
+@limiter.limit("10/minute")
+def watchlist_starter_pack_apply(request: Request, current_user: dict = Depends(current_user_or_401)):
+    try:
+        result = apply_starter_pack(current_user["id"])
+        _invalidate_user_terminal_cache(current_user["id"])
+        return result
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/watchlist/intelligence", response_model=list[WatchlistInsight], tags=["terminal"])

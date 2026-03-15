@@ -74,6 +74,23 @@ type MarketStateSummary = {
   bull_case: string[];
   bear_case: string[];
   next_steps: string[];
+  scorecard?: RegimeScorecard | null;
+};
+
+type RegimeScoreMetric = {
+  label: string;
+  current_value: string;
+  delta: string;
+  interpretation: string;
+  tone: string;
+  supports_regime: boolean;
+};
+
+type RegimeScorecard = {
+  conviction: string;
+  primary_signal: string;
+  caution_flag: string;
+  metrics: RegimeScoreMetric[];
 };
 
 type RegimeTransition = {
@@ -385,6 +402,40 @@ type DeliveryPreferences = {
   timezone: string;
 };
 
+type SystemDiagnostics = {
+  app_env: string;
+  database: {
+    connected: boolean;
+    error: string;
+  };
+  security: {
+    session_secure: boolean;
+    session_samesite: string;
+    cors_origins: string[];
+    rate_limit_backend: {
+      configured: boolean;
+      mode: string;
+      redis_ok: boolean;
+      key_prefix?: string;
+    };
+  };
+  data: {
+    file_exists: boolean;
+    file_updated_at: string;
+    latest_market_data_at: string;
+    latest_feature_data_at: string;
+    rows: number;
+  };
+  model: {
+    loaded: boolean;
+    classes: string[];
+    feature_count: number;
+    training_window: Record<string, unknown>;
+    metrics: Record<string, number>;
+  };
+  warnings: string[];
+};
+
 type BriefingDeliveryResult = {
   headline: string;
   cadence: string;
@@ -404,6 +455,22 @@ type SubscriptionTier = {
   verified_calendar: boolean;
   webhook_delivery: boolean;
   briefing_history_limit: number;
+};
+
+type StarterPackItem = {
+  symbol: string;
+  label: string;
+  role: string;
+  rationale: string;
+};
+
+type StarterPackResponse = {
+  name: string;
+  description: string;
+  items: StarterPackItem[];
+  applied_symbols: string[];
+  already_seeded: boolean;
+  watchlist: WatchlistItem[];
 };
 
 type SharedWorkspaceMember = {
@@ -466,8 +533,10 @@ type TerminalData = {
   briefingHistory: BriefingHistoryItem[];
   metadata: Metadata;
   delivery: DeliveryPreferences;
+  diagnostics: SystemDiagnostics | null;
   tiers: SubscriptionTier[];
   workspace: SharedWorkspace | null;
+  starterPack: StarterPackResponse | null;
 };
 
 type TerminalBootstrap = {
@@ -1463,8 +1532,10 @@ function toInitialData(bootstrap: TerminalBootstrap): TerminalData {
     briefingHistory: [],
     metadata: emptyMetadata(),
     delivery: emptyDelivery(),
+    diagnostics: null,
     tiers: [],
     workspace: null,
+    starterPack: null,
   };
 }
 
@@ -1562,6 +1633,7 @@ export default function TerminalShell() {
   const [stressTestLoading, setStressTestLoading] = useState(false);
   const [worldLastUpdatedAt, setWorldLastUpdatedAt] = useState<string>("");
   const [worldSocketConnected, setWorldSocketConnected] = useState(false);
+  const [starterPackLoading, setStarterPackLoading] = useState(false);
   const [mapViewport, setMapViewport] = useState<MapViewport>({ scale: 1, tx: 0, ty: 0 });
   const [mapDragging, setMapDragging] = useState(false);
   const [hoveredCountry, setHoveredCountry] = useState<{
@@ -1966,13 +2038,14 @@ export default function TerminalShell() {
       }
 
       if (view === "signals") {
-        const [signals, watchlistInsights, watchlistExposures, watchlistNews, catalysts] =
+        const [signals, watchlistInsights, watchlistExposures, watchlistNews, catalysts, starterPack] =
           await Promise.all([
             apiFetch<SignalCard[]>("/signals/trending"),
             apiFetch<WatchlistInsight[]>("/watchlist/intelligence"),
             apiFetch<WatchlistExposure[]>("/watchlist/exposures"),
             apiFetch<WatchlistNewsItem[]>("/watchlist/news"),
             apiFetch<CatalystEvent[]>("/calendar/catalysts"),
+            apiFetch<StarterPackResponse>("/watchlist/starter-pack"),
           ]);
         setData((current) =>
           current
@@ -1983,6 +2056,7 @@ export default function TerminalShell() {
                 watchlistExposures,
                 watchlistNews,
                 catalysts,
+                starterPack,
               }
             : current,
         );
@@ -2313,6 +2387,31 @@ export default function TerminalShell() {
     } finally {
       setSaving("");
     }
+  }
+
+  async function handleLoadStarterPack() {
+    setStarterPackLoading(true);
+    try {
+      const starterPack = await apiFetch<StarterPackResponse>("/watchlist/starter-pack", { force: true });
+      setData((current) => (current ? { ...current, starterPack } : current));
+      const result = await apiFetch<StarterPackResponse>("/watchlist/starter-pack", { method: "POST" });
+      setData((current) => (current ? { ...current, starterPack: result } : current));
+      setLoadedViews((current) => ({ ...current, signals: false }));
+      await refreshActiveView();
+      const firstSymbol = result.watchlist[0]?.symbol;
+      if (firstSymbol) {
+        setSelectedWatchlistSymbol(firstSymbol);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Failed to load starter pack.");
+    } finally {
+      setStarterPackLoading(false);
+    }
+  }
+
+  async function handleStarterPackRecovery() {
+    await handleLoadStarterPack();
+    setActiveView("signals");
   }
 
   async function handleDeliverySubmit(event: FormEvent<HTMLFormElement>) {
@@ -2968,15 +3067,22 @@ export default function TerminalShell() {
 
                   <div className="nt-grid-row">
                     <article className="nt-panel nt-card">
-                      <span className="eyebrow">Why This Regime</span>
+                      <span className="eyebrow">Regime Scorecard</span>
                       <div className="nt-stack">
-                        {firstItems(data?.marketState.drivers, 4).map((driver) => (
-                          <div className="nt-list-item" key={`${driver.label}-${driver.value}`}>
-                            <strong>{driver.label}</strong>
-                            <span className={toneClass(driver.tone)}>{driver.value}</span>
+                        <div className="nt-list-item">
+                          <strong>{data?.marketState.scorecard?.conviction || "Building conviction"}</strong>
+                          <span>{data?.marketState.scorecard?.primary_signal || "Waiting on primary signal"}</span>
+                          <p>{data?.marketState.scorecard?.caution_flag || "No active caution flag."}</p>
+                        </div>
+                        {firstItems(data?.marketState.scorecard?.metrics || [], 4).map((metric) => (
+                          <div className="nt-list-item" key={`${metric.label}-${metric.current_value}`}>
+                            <strong>{metric.label}</strong>
+                            <span className={toneClass(metric.tone)}>{metric.current_value}</span>
+                            <p>{metric.delta}</p>
+                            <p className="muted-copy">{metric.interpretation}</p>
                           </div>
                         ))}
-                        {!data?.marketState.drivers.length ? <SkeletonList rows={3} /> : null}
+                        {!data?.marketState.scorecard?.metrics?.length ? <SkeletonList rows={3} /> : null}
                       </div>
                     </article>
 
@@ -3687,6 +3793,29 @@ export default function TerminalShell() {
                     </div>
                   ))}
                 </div>
+                {!data?.watchlist?.length ? (
+                  <div className="nt-stack" style={{ marginTop: 16 }}>
+                    <div className="nt-list-item">
+                      <strong>{data?.starterPack?.name || "Starter Pack"}</strong>
+                      <p>{data?.starterPack?.description || "Load a curated cross-asset watchlist so the signals workspace is immediately useful."}</p>
+                    </div>
+                    <div className="nt-chip-row">
+                      {(data?.starterPack?.items || []).map((item) => (
+                        <span className="nt-chip" key={`starter-${item.symbol}`}>
+                          {item.symbol} · {item.role}
+                        </span>
+                      ))}
+                    </div>
+                    <button
+                      className="button button-primary"
+                      disabled={starterPackLoading}
+                      onClick={() => void handleLoadStarterPack()}
+                      type="button"
+                    >
+                      {starterPackLoading ? "Loading..." : "Load Starter Watchlist"}
+                    </button>
+                  </div>
+                ) : null}
               </article>
 
               <article className="nt-panel nt-card">

@@ -43,6 +43,14 @@ def _tone_from_value(value: float, positive_threshold: float, negative_threshold
     return "neutral"
 
 
+def _format_pct_delta(current: float, previous: float) -> str:
+    return f"{(current - previous) * 100:+.2f} pts vs prior session"
+
+
+def _format_numeric_delta(current: float, previous: float) -> str:
+    return f"{current - previous:+.2f} vs prior session"
+
+
 def build_market_state_summary(model, meta: dict, prediction=None, sectors=None, news=None) -> dict:
     prediction = prediction or predict_latest(model, meta)
     prices = load_prices()
@@ -121,6 +129,59 @@ def build_market_state_summary(model, meta: dict, prediction=None, sectors=None,
             "label": "Breadth",
             "value": breadth,
             "tone": "positive" if breadth_score > 0 else ("negative" if breadth_score < 0 else "neutral"),
+        },
+    ]
+
+    scorecard_metrics = [
+        {
+            "label": "SPY 20D Momentum",
+            "current_value": f"{spy_mom_20d * 100:.2f}%",
+            "delta": _format_pct_delta(float(latest["spy_mom_20d"]), float(previous["spy_mom_20d"])),
+            "interpretation": (
+                "Positive medium-term trend supports risk-taking."
+                if spy_mom_20d > 0
+                else "Negative medium-term trend is leaning defensive."
+            ),
+            "tone": _tone_from_value(spy_mom_20d, 0.0, 0.0),
+            "supports_regime": spy_mom_20d > 0 if prediction.regime == "RiskOn" else spy_mom_20d <= 0,
+        },
+        {
+            "label": "SPY 20D Volatility",
+            "current_value": f'{float(latest["spy_vol_20d"]) * 100:.2f}%',
+            "delta": _format_pct_delta(float(latest["spy_vol_20d"]), float(previous["spy_vol_20d"])),
+            "interpretation": (
+                "Volatility is contained enough for cleaner trend expression."
+                if float(latest["spy_vol_20d"]) < 0.02
+                else "Higher realized volatility increases reversal risk."
+            ),
+            "tone": "negative" if float(latest["spy_vol_20d"]) >= 0.02 else "positive",
+            "supports_regime": float(latest["spy_vol_20d"]) < 0.02 if prediction.regime == "RiskOn" else float(latest["spy_vol_20d"]) >= 0.02,
+        },
+        {
+            "label": "VIX Level",
+            "current_value": f"{vix_level:.2f}",
+            "delta": _format_numeric_delta(vix_level, float(previous.get("vix_level", vix_level))),
+            "interpretation": (
+                "Low implied volatility is supporting a calmer tape."
+                if vix_level < 18
+                else "Elevated implied volatility is pressuring conviction."
+                if vix_level >= 25
+                else "The tape is tradable but still demands tighter risk control."
+            ),
+            "tone": "negative" if vix_level >= 25 else ("neutral" if vix_level >= 18 else "positive"),
+            "supports_regime": vix_level < 18 if prediction.regime == "RiskOn" else vix_level >= 18,
+        },
+        {
+            "label": "Cross-Asset Confirmation",
+            "current_value": cross_asset_confirmation,
+            "delta": f"{confirmation_pairs}/{total_pairs or 1} tracked assets confirm",
+            "interpretation": (
+                "Other tracked assets are reinforcing the current tape."
+                if cross_asset_confirmation == "Strong confirmation"
+                else "Other tracked assets are not fully confirming the tape."
+            ),
+            "tone": "positive" if cross_asset_confirmation == "Strong confirmation" else ("negative" if cross_asset_confirmation == "Cross-asset divergence" else "neutral"),
+            "supports_regime": cross_asset_confirmation in {"Strong confirmation", "Partial confirmation"},
         },
     ]
 
@@ -256,6 +317,18 @@ def build_market_state_summary(model, meta: dict, prediction=None, sectors=None,
         "Open Signals to see which watchlist names are aligned or fighting the current backdrop.",
         "Use World Affairs to confirm whether headline flow supports or threatens the current tape.",
     ]
+    supportive_metric_count = len([metric for metric in scorecard_metrics if metric["supports_regime"]])
+    if prediction.confidence >= 0.8 and supportive_metric_count >= 3:
+        conviction = "High conviction"
+    elif prediction.confidence >= 0.6 and supportive_metric_count >= 2:
+        conviction = "Moderate conviction"
+    else:
+        conviction = "Fragile conviction"
+    primary_signal = max(
+        scorecard_metrics,
+        key=lambda metric: 1 if metric["tone"] == "positive" else (-1 if metric["tone"] == "negative" else 0),
+    )["label"]
+    caution_flag = warnings[0] if warnings else "No major caution flag beyond normal regime turnover risk."
 
     # Executive Summary uses stale-while-revalidate so request path never blocks on LLM/network.
     global _SUMMARY_CACHE
@@ -309,6 +382,12 @@ def build_market_state_summary(model, meta: dict, prediction=None, sectors=None,
         "bull_case": bull_case[:4],
         "bear_case": bear_case[:4],
         "next_steps": next_steps,
+        "scorecard": {
+            "conviction": conviction,
+            "primary_signal": primary_signal,
+            "caution_flag": caution_flag,
+            "metrics": scorecard_metrics,
+        },
     }
 
 
