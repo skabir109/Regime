@@ -7,14 +7,14 @@ Ensure all latest changes (SQLModel, Next.js, Documentation, Security) are pushe
 ```bash
 git add .
 git commit -m "Final polish: Intelligence, Security, and Production Infrastructure"
-git push origin main
+git push origin master
 ```
 
 ## 2. DigitalOcean Setup
 1.  **Log in** to your DigitalOcean account.
 2.  Click **"Create"** (top right) -> **"Apps"**.
 3.  Choose **GitHub** as the source.
-4.  Select your `regime` repository and the `main` branch.
+4.  Select your `regime` repository and the active submission branch.
 5.  **CRITICAL:** Look for the link that says **"Edit Plan"** or **"Upload App Spec"**. 
 6.  Upload the `app.yaml` file located in your project root. DigitalOcean will automatically configure the `regime-api` and `regime-web` services.
 

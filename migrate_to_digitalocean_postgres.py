@@ -171,6 +171,7 @@ def _prepare_target_schema(target_url: str) -> None:
     os.environ["DIRECT_URL"] = target_url
 
     sys.path.insert(0, str(BACKEND_DIR))
+    import app.schemas  # noqa: F401
     from app.services.db import init_db
 
     init_db()
