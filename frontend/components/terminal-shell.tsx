@@ -2600,6 +2600,41 @@ export default function TerminalShell() {
   const emailUnlocked = hasTierAccess(currentTier, "pro");
   const webhookUnlocked = hasTierAccess(currentTier, "pro");
   const guide = regimeGuide[data?.marketState.regime || ""] || regimeGuide.RiskOn;
+  const errorBannerCopy: Record<ViewKey, { title: string; guidance: string }> = {
+    monitor: {
+      title: "Overview refresh failed.",
+      guidance: "Use the current regime snapshot as a fallback, then refresh once market data connectivity stabilizes.",
+    },
+    briefing: {
+      title: "Briefing refresh failed.",
+      guidance: "The baseline session plan remains usable while the AI analyst path recovers.",
+    },
+    world: {
+      title: "World Affairs refresh failed.",
+      guidance: "Review the latest macro themes already on screen, then retry when the upstream feed settles.",
+    },
+    markets: {
+      title: "Cross-asset refresh failed.",
+      guidance: "Existing market panels remain visible; use them as the degraded-mode view until the next sync succeeds.",
+    },
+    signals: {
+      title: "Signals workspace refresh failed.",
+      guidance: "Starter watchlist recovery and the last synced watchlist state are still available from this workspace.",
+    },
+    desk: {
+      title: "Desk workspace refresh failed.",
+      guidance: "Shared notes and snapshots may be stale; retry after the backend stabilizes.",
+    },
+    news: {
+      title: "News and catalyst refresh failed.",
+      guidance: "Use the latest loaded catalyst list as a fallback and refresh before acting on time-sensitive headlines.",
+    },
+    system: {
+      title: "Settings refresh failed.",
+      guidance: "Open diagnostics and verify the database, session posture, and delivery configuration before retrying.",
+    },
+  };
+  const activeErrorCopy = errorBannerCopy[activeView];
   const bootstrapping = !data;
   const monitorHydrating = bootstrapping || !loadedViews.monitor;
   const briefingHydrating = bootstrapping || !loadedViews.briefing;
@@ -2811,7 +2846,7 @@ export default function TerminalShell() {
               {loading || refreshing
                 ? <SkeletonBlock width="220px" height="12px" />
                 : error
-                  ? error
+                  ? `${activeErrorCopy.title} ${activeViewMeta.subtitle} remains available in degraded mode.`
                   : activeViewMeta.subtitle}
               </p>
             </div>
@@ -2839,7 +2874,23 @@ export default function TerminalShell() {
             </div>
           </header>
 
-          {error ? <section className="nt-banner">{error}</section> : null}
+          {error ? (
+            <section className="nt-banner">
+              <div className="nt-list-item">
+                <strong>{activeErrorCopy.title}</strong>
+                <p>{error}</p>
+                <p className="muted-copy">{activeErrorCopy.guidance}</p>
+              </div>
+              <div className="nt-actions">
+                <button className="button button-small" onClick={() => void refreshActiveView()} type="button">
+                  Retry Sync
+                </button>
+                <button className="button button-small" onClick={() => setActiveView("system")} type="button">
+                  Open Diagnostics
+                </button>
+              </div>
+            </section>
+          ) : null}
 
           {activeView === "monitor" ? (
             <section className="nt-view nt-overview">
@@ -3288,7 +3339,7 @@ export default function TerminalShell() {
                       <h3>{aiBriefing?.content ? "Session Summary" : data?.briefing.headline || "--"}</h3>
                       <p>{parsedAIBriefing?.headline || briefingOverview || ""}</p>
                       {!aiBriefing?.content && aiBriefingError ? (
-                        <p className="muted-copy">AI brief unavailable. Showing baseline briefing.</p>
+                        <p className="muted-copy">AI brief unavailable. Baseline market briefing is still active for session planning.</p>
                       ) : null}
                     </>
                   )}
@@ -3419,7 +3470,7 @@ export default function TerminalShell() {
                     </div>
                   </div>
                 ) : (
-                  <p className="muted-copy">AI theme summary unavailable.</p>
+                  <p className="muted-copy">AI theme summary unavailable. Core macro themes below are the fallback view.</p>
                 )}
               </article>
 
@@ -3887,7 +3938,7 @@ export default function TerminalShell() {
                     </div>
                   </div>
                 ) : (
-                  <p className="muted-copy">AI watchlist context unavailable.</p>
+                  <p className="muted-copy">AI watchlist context unavailable. Exposure mapping and ticker detail remain live below.</p>
                 )}
               </article>
 
@@ -3993,8 +4044,12 @@ export default function TerminalShell() {
                       ))}
                     </div>
                   </div>
+                ) : signalsHydrating ? (
+                  <SkeletonList rows={4} />
+                ) : !data?.watchlist?.length ? (
+                  <p>Load the starter watchlist or add a symbol to inspect signal alignment, related news, and scheduled catalysts.</p>
                 ) : (
-                  signalsHydrating ? <SkeletonList rows={4} /> : <p>Select a watchlist ticker to inspect signal, related news, and scheduled catalysts.</p>
+                  <p>Select a watchlist ticker to inspect signal alignment, related news, and scheduled catalysts.</p>
                 )}
               </article>
 
@@ -4176,7 +4231,8 @@ export default function TerminalShell() {
           {activeView === "system" ? (
             <section className="nt-view nt-system">
               <article className="nt-panel nt-card">
-                <span className="eyebrow">Account</span>
+                <span className="eyebrow">Account And Plan</span>
+                <p className="muted-copy">Manage identity, active plan, and the workspace surfaces available to this account.</p>
                 <div className="nt-state-grid nt-settings-summary">
                   <div>
                     <span>User</span>
@@ -4224,6 +4280,7 @@ export default function TerminalShell() {
 
               <article className="nt-panel nt-card nt-settings-wide">
                 <span className="eyebrow">Delivery Preferences</span>
+                <p className="muted-copy">Control where briefings are delivered and which cadence the terminal should target.</p>
                 <form className="nt-form" onSubmit={(event) => void handleDeliverySubmit(event)}>
                   <div className="nt-settings-split">
                     <div className="nt-settings-group">
@@ -4365,7 +4422,8 @@ export default function TerminalShell() {
               </article>
 
               <article className="nt-panel nt-card">
-                <span className="eyebrow">Model Summary</span>
+                <span className="eyebrow">Model Configuration</span>
+                <p className="muted-copy">Review the active training window, metadata, and baseline model settings behind the terminal.</p>
                 <div className="nt-stack nt-settings-compact">
                   {Object.entries(data?.metadata.training || {}).slice(0, 8).map(([key, value]) => (
                     <div className="nt-symbol" key={key}>
@@ -4382,7 +4440,8 @@ export default function TerminalShell() {
               </article>
 
               <article className="nt-panel nt-card">
-                <span className="eyebrow">Model Drivers</span>
+                <span className="eyebrow">Top Drivers</span>
+                <p className="muted-copy">These are the highest-weight features currently shaping the regime classifier.</p>
                 <div className="nt-stack nt-settings-compact">
                   {Object.entries(data?.metadata.feature_importance || {})
                     .sort((a, b) => b[1] - a[1])
@@ -4403,6 +4462,7 @@ export default function TerminalShell() {
 
               <article className="nt-panel nt-card nt-settings-wide">
                 <span className="eyebrow">System Diagnostics</span>
+                <p className="muted-copy">Use this panel to verify infrastructure health before trusting a degraded session.</p>
                 {systemHydrating ? (
                   <SkeletonList rows={5} />
                 ) : (
@@ -4458,7 +4518,7 @@ export default function TerminalShell() {
                       ) : (
                         <div className="nt-list-item">
                           <strong>Status</strong>
-                          <p>No active diagnostics warnings.</p>
+                          <p>No active diagnostics warnings. Database, session posture, and fallback data checks are green.</p>
                         </div>
                       )}
                     </div>
@@ -4468,6 +4528,7 @@ export default function TerminalShell() {
 
               <article className="nt-panel nt-card">
                 <span className="eyebrow">Demo Controls</span>
+                <p className="muted-copy">Recover a known-good watchlist quickly before a demo, rehearsal, or judge walkthrough.</p>
                 <div className="nt-stack">
                   <div className="nt-list-item">
                     <strong>{data?.starterPack?.name || "Starter Pack"}</strong>
