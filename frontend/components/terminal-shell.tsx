@@ -2087,13 +2087,16 @@ export default function TerminalShell() {
       }
 
       setLoadedViews((current) => ({ ...current, [view]: true }));
+      setError("");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to load workspace data.");
     }
   }
 
   async function refreshActiveView(includeViewData = true) {
-    await loadCoreData(true);
+    if (activeView !== "system") {
+      await loadCoreData(true);
+    }
     if (includeViewData) {
       await loadViewData(activeView, true);
     }
