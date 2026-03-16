@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional, List
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from sqlmodel import SQLModel, Field as SQLField, Relationship
 from sqlalchemy import UniqueConstraint
 from urllib.parse import urlparse
@@ -46,7 +46,7 @@ class User(SQLModel, table=True):
     name: str
     password_hash: str
     tier: str = SQLField(default="free")
-    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    created_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
     is_verified: bool = SQLField(default=False)
     verification_token: Optional[str] = None
     verification_token_hash: Optional[str] = None
@@ -71,7 +71,7 @@ class DBSession(SQLModel, table=True):
     user_id: int = SQLField(foreign_key="users.id", ondelete="CASCADE")
     token_hash: str = SQLField(unique=True, index=True)
     expires_at: datetime
-    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    created_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
 
     user: User = Relationship(back_populates="sessions")
 
@@ -82,7 +82,7 @@ class WatchlistItemDB(SQLModel, table=True):
     user_id: int = SQLField(foreign_key="users.id", ondelete="CASCADE")
     symbol: str
     label: str
-    added_at: datetime = SQLField(default_factory=datetime.utcnow)
+    added_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
 
     user: User = Relationship(back_populates="watchlist_items")
 
@@ -95,7 +95,7 @@ class BriefingHistoryDB(SQLModel, table=True):
     headline: str
     overview: str
     payload_json: str
-    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    created_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
 
 
 class DeliveryPreferencesDB(SQLModel, table=True):
@@ -113,7 +113,7 @@ class DeliveryPreferencesDB(SQLModel, table=True):
     discord_webhook_url_enc: Optional[str] = None
     cadence: str = SQLField(default="premarket")
     timezone: str = SQLField(default="local")
-    updated_at: datetime = SQLField(default_factory=datetime.utcnow)
+    updated_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
 
     user: User = Relationship(back_populates="delivery_preferences")
 
@@ -124,7 +124,7 @@ class AuditLogDB(SQLModel, table=True):
     event_type: str
     user_id: Optional[int] = SQLField(default=None, foreign_key="users.id", ondelete="SET NULL")
     details: str
-    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    created_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
 
 
 class APIUsageCounterDB(SQLModel, table=True):
@@ -138,7 +138,7 @@ class APIUsageCounterDB(SQLModel, table=True):
     endpoint: str = SQLField(index=True)
     bucket: str = SQLField(index=True)
     count: int = SQLField(default=0)
-    updated_at: datetime = SQLField(default_factory=datetime.utcnow)
+    updated_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
 
 
 class SharedWorkspaceDB(SQLModel, table=True):
@@ -147,7 +147,7 @@ class SharedWorkspaceDB(SQLModel, table=True):
     owner_user_id: int = SQLField(foreign_key="users.id", ondelete="CASCADE")
     name: str
     invite_code: str = SQLField(unique=True)
-    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    created_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
 
 
 class SharedWorkspaceMemberDB(SQLModel, table=True):
@@ -155,7 +155,7 @@ class SharedWorkspaceMemberDB(SQLModel, table=True):
     workspace_id: int = SQLField(primary_key=True, foreign_key="shared_workspaces.id", ondelete="CASCADE")
     user_id: int = SQLField(primary_key=True, foreign_key="users.id", ondelete="CASCADE")
     role: str
-    joined_at: datetime = SQLField(default_factory=datetime.utcnow)
+    joined_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
 
 
 class SharedWatchlistItemDB(SQLModel, table=True):
@@ -165,7 +165,7 @@ class SharedWatchlistItemDB(SQLModel, table=True):
     symbol: str
     label: str
     added_by_user_id: int = SQLField(foreign_key="users.id", ondelete="CASCADE")
-    added_at: datetime = SQLField(default_factory=datetime.utcnow)
+    added_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
 
 
 class SharedWorkspaceNoteDB(SQLModel, table=True):
@@ -174,7 +174,7 @@ class SharedWorkspaceNoteDB(SQLModel, table=True):
     workspace_id: int = SQLField(foreign_key="shared_workspaces.id", ondelete="CASCADE")
     author_user_id: int = SQLField(foreign_key="users.id", ondelete="CASCADE")
     content: str
-    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    created_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
 
 
 class SharedBriefingSnapshotDB(SQLModel, table=True):
@@ -185,7 +185,7 @@ class SharedBriefingSnapshotDB(SQLModel, table=True):
     headline: str
     overview: str
     payload_json: str
-    created_at: datetime = SQLField(default_factory=datetime.utcnow)
+    created_at: datetime = SQLField(default_factory=lambda: datetime.now(UTC))
 
 
 class PredictRequest(BaseModel):
@@ -403,12 +403,14 @@ class WatchlistRequest(BaseModel):
     symbol: str
     label: str | None = None
 
-    @validator("symbol")
-    def sanitize_symbol(cls, v):
+    @field_validator("symbol")
+    @classmethod
+    def sanitize_symbol(cls, v: str) -> str:
         return normalize_symbol(v)
 
-    @validator("label")
-    def sanitize_label(cls, v):
+    @field_validator("label")
+    @classmethod
+    def sanitize_label(cls, v: str | None) -> str:
         return clean_text(v, max_len=80)
 
 
@@ -434,15 +436,17 @@ class RegisterRequest(BaseModel):
     password: str
     name: str
 
-    @validator("email")
-    def sanitize_email(cls, v):
+    @field_validator("email")
+    @classmethod
+    def sanitize_email(cls, v: str) -> str:
         cleaned = clean_text(v, max_len=254).lower()
         if "@" not in cleaned:
             raise ValueError("Valid email is required.")
         return cleaned
 
-    @validator("name")
-    def sanitize_name(cls, v):
+    @field_validator("name")
+    @classmethod
+    def sanitize_name(cls, v: str) -> str:
         cleaned = clean_text(v, max_len=80)
         if not cleaned:
             raise ValueError("Name is required.")
@@ -453,16 +457,18 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
-    @validator("email")
-    def sanitize_email(cls, v):
+    @field_validator("email")
+    @classmethod
+    def sanitize_email(cls, v: str) -> str:
         return clean_text(v, max_len=254).lower()
 
 
 class ClerkSessionRequest(BaseModel):
     session_token: str
 
-    @validator("session_token")
-    def sanitize_session_token(cls, v):
+    @field_validator("session_token")
+    @classmethod
+    def sanitize_session_token(cls, v: str) -> str:
         cleaned = clean_text(v, max_len=8192)
         if not cleaned:
             raise ValueError("Session token is required.")
@@ -471,16 +477,18 @@ class ClerkSessionRequest(BaseModel):
 class ForgotPasswordRequest(BaseModel):
     email: str
 
-    @validator("email")
-    def sanitize_email(cls, v):
+    @field_validator("email")
+    @classmethod
+    def sanitize_email(cls, v: str) -> str:
         return clean_text(v, max_len=254).lower()
 
 class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str
 
-    @validator("token")
-    def sanitize_token(cls, v):
+    @field_validator("token")
+    @classmethod
+    def sanitize_token(cls, v: str) -> str:
         cleaned = clean_text(v, max_len=512)
         if not cleaned:
             raise ValueError("Token is required.")
@@ -489,8 +497,9 @@ class ResetPasswordRequest(BaseModel):
 class VerifyEmailRequest(BaseModel):
     token: str
 
-    @validator("token")
-    def sanitize_token(cls, v):
+    @field_validator("token")
+    @classmethod
+    def sanitize_token(cls, v: str) -> str:
         cleaned = clean_text(v, max_len=512)
         if not cleaned:
             raise ValueError("Token is required.")
@@ -679,35 +688,41 @@ class DeliveryPreferencesRequest(BaseModel):
     cadence: str = "premarket"
     timezone: str | None = None
 
-    @validator("webhook_url")
-    def sanitize_webhook_url(cls, v):
+    @field_validator("webhook_url")
+    @classmethod
+    def sanitize_webhook_url(cls, v: str | None) -> str:
         return validate_webhook_url(v)
 
-    @validator("slack_webhook_url")
-    def sanitize_slack_webhook_url(cls, v):
+    @field_validator("slack_webhook_url")
+    @classmethod
+    def sanitize_slack_webhook_url(cls, v: str | None) -> str:
         return validate_webhook_url(v)
 
-    @validator("discord_webhook_url")
-    def sanitize_discord_webhook_url(cls, v):
+    @field_validator("discord_webhook_url")
+    @classmethod
+    def sanitize_discord_webhook_url(cls, v: str | None) -> str:
         return validate_webhook_url(v)
 
-    @validator("cadence")
-    def sanitize_cadence(cls, v):
+    @field_validator("cadence")
+    @classmethod
+    def sanitize_cadence(cls, v: str) -> str:
         cleaned = clean_text(v, max_len=32).lower()
         if not cleaned:
             return "premarket"
         return cleaned
 
-    @validator("timezone")
-    def sanitize_timezone(cls, v):
+    @field_validator("timezone")
+    @classmethod
+    def sanitize_timezone(cls, v: str | None) -> str:
         return clean_text(v or "local", max_len=64) or "local"
 
 
 class DeliveryChannelTestRequest(BaseModel):
     webhook_url: str | None = None
 
-    @validator("webhook_url")
-    def sanitize_webhook_url(cls, v):
+    @field_validator("webhook_url")
+    @classmethod
+    def sanitize_webhook_url(cls, v: str | None) -> str:
         return validate_webhook_url(v)
 
 
@@ -740,8 +755,9 @@ class SubscriptionTier(BaseModel):
 class SubscriptionUpdateRequest(BaseModel):
     tier: str
 
-    @validator("tier")
-    def sanitize_tier(cls, v):
+    @field_validator("tier")
+    @classmethod
+    def sanitize_tier(cls, v: str) -> str:
         cleaned = clean_text(v, max_len=16).lower()
         if not cleaned:
             raise ValueError("Tier is required.")
@@ -751,8 +767,9 @@ class SubscriptionUpdateRequest(BaseModel):
 class BillingCheckoutRequest(BaseModel):
     tier: str
 
-    @validator("tier")
-    def sanitize_tier(cls, v):
+    @field_validator("tier")
+    @classmethod
+    def sanitize_tier(cls, v: str) -> str:
         cleaned = clean_text(v, max_len=16).lower()
         if cleaned not in {"pro", "desk"}:
             raise ValueError("Checkout tier must be pro or desk.")
@@ -810,8 +827,9 @@ class SharedWorkspace(BaseModel):
 class SharedWorkspaceRequest(BaseModel):
     name: str
 
-    @validator("name")
-    def sanitize_name(cls, v):
+    @field_validator("name")
+    @classmethod
+    def sanitize_name(cls, v: str) -> str:
         cleaned = clean_text(v, max_len=80)
         if not cleaned:
             raise ValueError("Workspace name is required.")
@@ -820,8 +838,9 @@ class SharedWorkspaceRequest(BaseModel):
 class SharedWorkspaceJoinRequest(BaseModel):
     invite_code: str
 
-    @validator("invite_code")
-    def sanitize_invite_code(cls, v):
+    @field_validator("invite_code")
+    @classmethod
+    def sanitize_invite_code(cls, v: str) -> str:
         cleaned = clean_text(v, max_len=32).upper()
         if not cleaned:
             raise ValueError("Invite code is required.")
@@ -830,8 +849,9 @@ class SharedWorkspaceJoinRequest(BaseModel):
 class SharedWorkspaceNoteRequest(BaseModel):
     content: str
 
-    @validator("content")
-    def sanitize_content(cls, v):
+    @field_validator("content")
+    @classmethod
+    def sanitize_content(cls, v: str) -> str:
         cleaned = clean_text(v, max_len=500)
         if not cleaned:
             raise ValueError("Note content is required.")
@@ -873,16 +893,19 @@ class AIAnalyzeRequest(BaseModel):
     max_words: int = 220
     regenerate_on_fail: bool = True
 
-    @validator("mode")
-    def sanitize_mode(cls, v):
+    @field_validator("mode")
+    @classmethod
+    def sanitize_mode(cls, v: str) -> str:
         return clean_text(v, max_len=32).upper() or "BRIEFING"
 
-    @validator("query")
-    def sanitize_query(cls, v):
+    @field_validator("query")
+    @classmethod
+    def sanitize_query(cls, v: str) -> str:
         return clean_text(v, max_len=2000)
 
-    @validator("watchlist", pre=True)
-    def sanitize_watchlist(cls, v):
+    @field_validator("watchlist", mode="before")
+    @classmethod
+    def sanitize_watchlist(cls, v: object) -> list[str]:
         if not v:
             return []
         cleaned: list[str] = []
@@ -893,14 +916,16 @@ class AIAnalyzeRequest(BaseModel):
                 continue
         return cleaned[:25]
 
-    @validator("kb_context", pre=True)
-    def sanitize_kb_context(cls, v):
+    @field_validator("kb_context", mode="before")
+    @classmethod
+    def sanitize_kb_context(cls, v: object) -> list[str]:
         if not v:
             return []
         return [clean_text(str(item), max_len=300) for item in v[:20] if clean_text(str(item), max_len=300)]
 
-    @validator("max_words")
-    def clamp_max_words(cls, v):
+    @field_validator("max_words")
+    @classmethod
+    def clamp_max_words(cls, v: int) -> int:
         return max(120, min(int(v), 320))
 
 
