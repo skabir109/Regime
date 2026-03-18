@@ -282,7 +282,10 @@ def generate_analysis(payload: AIAnalyzeRequest) -> AIAnalyzeResponse:
 def generate_executive_summary(regime: str, confidence: float, headlines: list[str]) -> str:
     """Compatibility helper used by market state summary generation."""
     if not LLM_API_KEY:
-        return "Market intelligence active. (LLM Executive Summary unavailable: API key not configured)"
+        return (
+            "Market intelligence active. AI commentary is unavailable right now, "
+            "so Regime is showing the live model state and core market signals instead."
+        )
 
     headline_list = "\n".join([f"- {h}" for h in headlines[:5]])
     prompt = (
@@ -306,5 +309,8 @@ def generate_executive_summary(regime: str, confidence: float, headlines: list[s
             max_tokens=160,
             temperature=0.4,
         )
-    except Exception as exc:
-        return f"Market intelligence active. (Executive summary generation delayed: {str(exc)})"
+    except Exception:
+        return (
+            "Market intelligence active. AI commentary is taking longer than expected, "
+            "so Regime is falling back to the live regime snapshot and deterministic market signals."
+        )
