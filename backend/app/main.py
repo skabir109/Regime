@@ -12,6 +12,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.config import (
+    AUTO_INIT_DB,
     APP_ENV,
     APP_DESCRIPTION,
     APP_TITLE,
@@ -258,7 +259,8 @@ async def capture_security_status_codes(request: Request, call_next):
         _record_security_metric(f"http_{response.status_code}")
     return response
 
-init_db()
+if AUTO_INIT_DB:
+    init_db()
 
 MODEL, META = load_artifacts()
 _CACHE: dict[str, tuple[float, object]] = {}

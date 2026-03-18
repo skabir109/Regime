@@ -12,6 +12,7 @@ import requests
 from sqlmodel import Session, select
 
 from app.config import (
+    AUTO_INIT_DB,
     CLERK_API_URL,
     CLERK_AUDIENCE,
     CLERK_ISSUER,
@@ -45,7 +46,7 @@ def _user_payload(user: User) -> dict:
 
 def _ensure_schema_ready() -> None:
     global _SCHEMA_READY
-    if _SCHEMA_READY:
+    if _SCHEMA_READY or not AUTO_INIT_DB:
         return
     init_db()
     _SCHEMA_READY = True

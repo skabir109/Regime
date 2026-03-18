@@ -31,6 +31,7 @@ APP_DESCRIPTION = (
     "Market intelligence backend for Regime."
 )
 APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
+AUTO_INIT_DB = os.getenv("AUTO_INIT_DB", "false" if APP_ENV == "production" else "true").strip().lower() == "true"
 
 SESSION_COOKIE_NAME = "regime_session"
 SESSION_DURATION_HOURS = 24 * 7

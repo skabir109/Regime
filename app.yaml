@@ -19,6 +19,9 @@ services:
       - key: APP_ENV
         scope: RUN_TIME
         value: production
+      - key: AUTO_INIT_DB
+        scope: RUN_TIME
+        value: "false"
       - key: FRONTEND_ORIGIN
         scope: RUN_TIME
         value: ${regime-web.PUBLIC_URL}
@@ -41,7 +44,7 @@ services:
       timeout_seconds: 5
       success_threshold: 1
       failure_threshold: 3
-    run_command: uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 2
+    run_command: uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 1
 
   - name: regime-web
     github:
