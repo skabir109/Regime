@@ -88,7 +88,6 @@ from app.schemas import (
     RegisterRequest,
 )
 from app.services.alerts import build_alerts
-from app.services.db import init_db
 from app.services.auth import (
     authenticate_clerk_session_token,
     authenticate_user,
@@ -258,9 +257,6 @@ async def capture_security_status_codes(request: Request, call_next):
     if response.status_code in {401, 403, 429}:
         _record_security_metric(f"http_{response.status_code}")
     return response
-
-if AUTO_INIT_DB:
-    init_db()
 
 MODEL, META = load_artifacts()
 _CACHE: dict[str, tuple[float, object]] = {}
